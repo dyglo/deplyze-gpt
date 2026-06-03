@@ -1,30 +1,45 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Claude.ai warm-dark palette */
 :root {
-  --background: 0 0% 6.7%;
-  --foreground: 0 0% 100%;
-  --card: 0 0% 10.2%;
-  --card-foreground: 0 0% 100%;
-  --popover: 0 0% 10.2%;
-  --popover-foreground: 0 0% 100%;
-  --primary: 24 64% 47%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 0 0% 13%;
-  --secondary-foreground: 0 0% 100%;
-  --muted: 0 0% 13%;
-  --muted-foreground: 0 0% 63%;
-  --accent: 24 64% 47%;
-  --accent-foreground: 0 0% 100%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 0 0% 16.5%;
-  --input: 0 0% 16.5%;
-  --ring: 24 64% 47%;
+  --bg-app: #262624;        /* main surface */
+  --bg-sidebar: #1f1e1d;    /* sidebar / deeper surface */
+  --bg-elevated: #30302e;   /* cards, input, popovers */
+  --bg-hover: #353432;
+  --bg-input: #30302e;
+  --border-subtle: #3a3937;
+  --border-faint: #34322f;
+  --text-primary: #f5f4ef;  /* near-white warm */
+  --text-secondary: #c2c0b6;
+  --text-muted: #8a877e;
+  --text-faint: #6b6862;
+  --accent: #d97757;        /* Claude clay/terracotta */
+  --accent-hover: #c2603f;
   --radius: 0.75rem;
+
+  --background: 60 2% 14.5%;
+  --foreground: 48 18% 95%;
+  --card: 40 4% 18.8%;
+  --card-foreground: 48 18% 95%;
+  --popover: 40 4% 18.8%;
+  --popover-foreground: 48 18% 95%;
+  --primary: 15 60% 60%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 40 4% 18.8%;
+  --secondary-foreground: 48 18% 95%;
+  --muted: 40 4% 18.8%;
+  --muted-foreground: 45 6% 55%;
+  --accent: 15 60% 60%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 72% 58%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 40 5% 22%;
+  --input: 40 5% 22%;
+  --ring: 15 60% 60%;
 }
 
 html,
@@ -36,27 +51,36 @@ body,
 
 body {
   margin: 0;
-  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: #111111;
-  color: #ffffff;
+  background: #262624;
+  color: var(--text-primary);
+}
+
+.font-serif-display {
+  font-family: 'Newsreader', Georgia, 'Times New Roman', serif;
+  font-weight: 400;
+  letter-spacing: -0.01em;
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a2a2a;
-  border-radius: 2px;
+  background: #46443f;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #c96a2a;
+  background: #565249;
+  background-clip: padding-box;
 }
 
 /* Smooth animations */
@@ -68,6 +92,20 @@ body {
 @keyframes pulse-orange {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
+}
+
+@keyframes progress-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.progress-shimmer {
+  animation: progress-shimmer 1.6s linear infinite;
+}
+
+/* Hide injected branding badge if re-added at runtime */
+#emergent-badge {
+  display: none !important;
 }
 
 .animate-fade-in {

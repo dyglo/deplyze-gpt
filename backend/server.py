@@ -12,6 +12,7 @@ from pathlib import Path
 from pydantic import BaseModel
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
+import cv2
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -60,6 +61,20 @@ def _get_filepath(file_url: str) -> Optional[Path]:
         filename = file_url.split("/api/files/outputs/")[-1]
         return OUTPUTS_DIR / filename
     return None
+
+
+def _get_video_duration_seconds(video_path: str) -> float:
+    cap = cv2.VideoCapture(video_path)
+    try:
+        if not cap.isOpened():
+            return 0.0
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0
+        if frame_count <= 0 or fps <= 0:
+            return 0.0
+        return frame_count / fps
+    finally:
+        cap.release()
 
 
 @api_router.get("/")
@@ -114,10 +129,11 @@ async def serve_file(file_type: str, filename: str):
     if not filepath.exists():
         raise HTTPException(404, "File not found")
 
-    return FileResponse(
-        str(filepath),
-        headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"},
-    )
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"}
+    if file_type == "outputs":
+        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+    return FileResponse(str(filepath), headers=headers)
 
 
 @api_router.post("/analyze/image")
@@ -151,6 +167,17 @@ async def analyze_video(request: VideoAnalysisRequest, background_tasks: Backgro
     filepath = _get_filepath(request.file_url)
     if not filepath or not filepath.exists():
         raise HTTPException(404, "File not found")
+
+    from yolo_service import MODEL_MAP, ensure_model_available
+    if request.model not in MODEL_MAP:
+        raise HTTPException(422, f"Unsupported video model: {request.model}")
+    try:
+        await asyncio.get_event_loop().run_in_executor(executor, ensure_model_available, request.model)
+    except Exception:
+        raise HTTPException(
+            422,
+            f"Model {request.model} could not be downloaded for video processing. Try again later.",
+        )
 
     job_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -198,9 +225,13 @@ async def _run_video_job(job_id: str, video_path: str, model_type: str, confiden
     try:
         from video_processor import process_video_yolo
         loop = asyncio.get_event_loop()
+        duration_seconds = _get_video_duration_seconds(video_path)
+        timeout_multiplier = 20 if model_type == "yolo26-sem" else 4
+        timeout_floor = 1200 if model_type == "yolo26-sem" else 600
+        timeout_seconds = max(timeout_floor, int(duration_seconds * timeout_multiplier))
         output_path = await asyncio.wait_for(
             loop.run_in_executor(executor, process_video_yolo, job_id, video_path, model_type, confidence, OUTPUTS_DIR),
-            timeout=600,
+            timeout=timeout_seconds,
         )
         output_url = f"/api/files/outputs/{Path(output_path).name}"
         await db.video_jobs.update_one(
@@ -210,7 +241,7 @@ async def _run_video_job(job_id: str, video_path: str, model_type: str, confiden
     except asyncio.TimeoutError:
         await db.video_jobs.update_one(
             {"job_id": job_id},
-            {"$set": {"status": "failed", "error": "Processing timeout exceeded (10min)"}},
+            {"$set": {"status": "failed", "error": "Processing timeout exceeded"}},
         )
     except Exception as e:
         logger.error(f"Job {job_id} failed: {e}", exc_info=True)
