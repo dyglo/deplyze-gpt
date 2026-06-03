@@ -1,58 +1,152 @@
 # DeplyzeGPT Project Status
 
-## What This Project Is
+## Summary
 
-DeplyzeGPT is a computer vision studio for image and video analysis. It combines a React chat-style frontend, a FastAPI backend, MongoDB-backed async video jobs, Gemini multimodal analysis, and Ultralytics YOLO26 models for object detection, instance segmentation, and semantic segmentation.
+DeplyzeGPT is now a Firebase-authenticated computer vision studio with persistent Claude-style sessions. The app supports image/video upload, Gemini analysis, YOLO analysis, session restore, and R2-backed storage without storing presigned URLs in Firestore.
 
-The user-facing goal is simple: upload an image or video, choose the right model, ask for an analysis, and receive either a textual Gemini response or a downloadable annotated visual output.
+## Stack
 
-## Where We Are
+- Frontend: React, CRA, Firebase client SDK, lucide icons.
+- Backend: FastAPI, Firebase Admin SDK, Firestore, Cloudflare R2, Google GenAI SDK, OpenCV, Ultralytics.
+- Auth: Firebase Auth ID tokens on all `/api/*` requests.
+- Persistence: Firestore jobs, sessions, and messages.
+- Object storage: Cloudflare R2 with S3-compatible API.
+- Models: `gemini-2.5-flash-lite`, YOLO26, YOLO26-Seg, YOLO26-Sem.
 
-The core Studio workflow is now functional across the supported model modes:
+## Implemented Workflows
 
-- Gemini 3 Flash Preview image and video analysis.
-- YOLO26 object detection for images and videos.
-- YOLO26-Seg instance segmentation for images and videos.
-- YOLO26-Sem semantic segmentation for images and videos.
+- User signs in through Firebase Auth.
+- Uploads stream to R2 under a per-user, per-session prefix.
+- A session is created automatically if no `session_id` is supplied.
+- Image and video analysis routes write user and assistant messages on completion.
+- Video YOLO routes update Firestore job status for frontend listeners.
+- Session list is shown in the sidebar, pinned first and newest first.
+- Sessions can be renamed, pinned/unpinned, and deleted.
+- Deleting a session deletes its messages, associated job documents, and R2 files under that session prefix.
+- Session restore returns fresh one-hour presigned URLs for stored R2 paths.
 
-The app runs locally with:
+## Firestore Layout
 
-- React frontend on `http://127.0.0.1:3000`
-- FastAPI backend on `http://127.0.0.1:8000`
-- MongoDB container on `127.0.0.1:27017`
+```text
+jobs/{uid}/items/{job_id}
+  job_id
+  type
+  status
+  progress
+  model
+  session_id
+  input_filename
+  input_key
+  output_key
+  output_r2_path
+  error
+  created_at
+  updated_at
 
-## What Has Been Done
+sessions/{uid}/items/{session_id}
+  session_id
+  name
+  model
+  pinned
+  created_at
+  updated_at
 
-- Replaced the broken Gemini integration that depended on `emergentintegrations` with the official Google GenAI SDK.
-- Updated Gemini to use `gemini-3-flash-preview`.
-- Fixed Gemini image analysis using inline image bytes.
-- Fixed Gemini video analysis using the Gemini Files API on `v1beta`.
-- Added YOLO26 semantic model support with `yolo26n-sem.pt`.
-- Optimized semantic video processing so masks stay aligned with moving objects.
-- Improved semantic and segmentation overlay opacity for clearer visual output.
-- Improved detection box styling for cleaner annotated videos.
-- Replaced hard video timeout behavior with duration-aware processing limits.
-- Added image and video download support for generated outputs.
-- Rewrote the README with concise setup, stack, and test instructions.
+sessions/{uid}/items/{session_id}/messages/{message_id}
+  message_id
+  role
+  content
+  input_filename
+  input_r2_path
+  output_r2_path
+  output_type
+  job_id
+  model
+  detections
+  suggestions
+  created_at
+```
 
-## Current Validation
+## R2 Layout
 
-The following checks have passed locally:
+```text
+uploads/{uid}/{session_id}/{job_id}/input.<ext>
+outputs/{uid}/{session_id}/{job_id}/output.<ext>
+```
 
-- Backend Python compile check.
-- Frontend production build.
-- YOLO image and video smoke tests.
-- YOLO-Seg image and video smoke tests.
-- YOLO-Sem image and video smoke tests.
-- Gemini image API smoke test.
-- Gemini video API smoke test.
+Firestore stores the object path only. The backend attaches `input_url` or `output_url` when returning messages or output downloads.
 
-## Project Goal
+## Backend Surface
 
-The next phase should move DeplyzeGPT from a working local prototype toward a production-ready computer vision platform:
+Existing routes retained:
 
-- Harden configuration and secret management.
-- Add automated backend and frontend tests for the main analysis flows.
-- Add job history and persistent user-facing output management.
-- Improve long-video processing with better queueing, cancellation, and progress visibility.
-- Prepare deployment infrastructure for the frontend, backend, database, storage, and model assets.
+- `POST /api/upload`
+- `POST /api/analyze/image`
+- `POST /api/analyze/video`
+- `POST /api/analyze/video/gemini`
+- `GET /api/analyze/video/status/{job_id}`
+- `GET /api/files/{file_type}/{job_id}/{filename}`
+- `GET /api/files/presign/{job_id}`
+
+New session routes:
+
+- `POST /api/sessions`
+- `GET /api/sessions`
+- `PATCH /api/sessions/{session_id}`
+- `DELETE /api/sessions/{session_id}`
+- `GET /api/sessions/{session_id}/messages`
+
+## Frontend Surface
+
+- `Sidebar.jsx` lists sessions and owns row-level actions.
+- `Studio.jsx` owns session state, active session restore, and analysis calls.
+- `App.jsx` clears active-session localStorage keys on sign-out.
+- Active session is stored under `deplyzegpt.activeSession.{uid}`.
+
+## Security Rules
+
+`firestore.rules` grants a signed-in user access only to:
+
+```text
+jobs/{uid}/items/{jobId}
+sessions/{uid}/items/{sessionId}
+sessions/{uid}/items/{sessionId}/messages/{messageId}
+```
+
+The rules were deployed to `projects/vision-sys/releases/cloud.firestore` during local validation.
+
+## Local Validation Completed
+
+- Backend compile:
+
+```powershell
+python -B -m py_compile backend\server.py backend\session_service.py backend\firestore_service.py backend\gemini_service.py
+```
+
+- Frontend production build:
+
+```powershell
+npm run build
+```
+
+- Authenticated smoke checks against the live local backend:
+  - `GET /api/sessions` returned `200`.
+  - `POST /api/upload` returned `200`.
+  - `POST /api/analyze/image` with Gemini returned `200`.
+  - `GET /api/sessions/{session_id}/messages` returned persisted messages.
+  - `POST /api/analyze/video/gemini` returned `200`.
+
+## Known Risks
+
+- Session and message endpoints are not paginated yet.
+- The delete path performs best-effort R2 cleanup and should gain retry logging for production.
+- The UI has manual validation but should gain automated React tests for restore, rename, pin, and delete.
+- Backend routes need integration tests with mocked Firebase/R2/Gemini dependencies.
+- Video processing still runs inside the API process; a queue-backed worker would be better for production load.
+
+## Next Recommended Work
+
+- Add CI tests for session CRUD and message restore.
+- Add pagination parameters for sessions and messages.
+- Add a background queue for long-running video jobs.
+- Add a production deployment runbook.
+- Add observability around Gemini/R2/Firestore failures.

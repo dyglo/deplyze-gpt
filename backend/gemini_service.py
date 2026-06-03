@@ -13,8 +13,31 @@ load_dotenv(Path(__file__).parent / ".env")
 
 logger = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-3-flash-preview"
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+
+
+class GeminiServiceError(RuntimeError):
+    pass
+
+
+def clean_gemini_error(exc: Exception) -> str:
+    message = str(exc)
+    lower = message.lower()
+    if "503" in lower or "unavailable" in lower or "high demand" in lower:
+        return "Gemini is temporarily busy. Please try again in a moment."
+    if "429" in lower or "quota" in lower or "rate limit" in lower:
+        return "Gemini usage limit was reached. Please wait a bit and try again."
+    if "api key" in lower or "permission" in lower or "unauthorized" in lower:
+        return "Gemini is not available right now. Check the API key configuration."
+    if "timeout" in lower:
+        return "Gemini took too long to respond. Please try again."
+    return "Gemini analysis failed. Please try again."
+
+
+def _raise_clean_gemini_error(exc: Exception):
+    logger.warning("Gemini provider error: %s", exc)
+    raise GeminiServiceError(clean_gemini_error(exc)) from exc
 
 DOMAIN_PROMPTS = {
     "medical": (
@@ -90,7 +113,7 @@ def _extract_suggestions(text: str) -> list:
 
 def _get_client() -> genai.Client:
     if not GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY is not set. Add it to backend/.env before using Gemini.")
+        raise GeminiServiceError("Gemini is not configured. Add GEMINI_API_KEY to backend/.env.")
     return genai.Client(api_key=GEMINI_API_KEY, http_options={"api_version": "v1beta"})
 
 
@@ -98,7 +121,7 @@ def _generate_config(system_prompt: str) -> types.GenerateContentConfig:
     return types.GenerateContentConfig(
         systemInstruction=system_prompt,
         maxOutputTokens=2048,
-        thinkingConfig=types.ThinkingConfig(thinkingLevel="low"),
+        thinkingConfig=types.ThinkingConfig(thinkingBudget=0),
     )
 
 
@@ -153,14 +176,17 @@ def _analyze_image_sync(file_path: str, prompt: str, system_prompt: str) -> dict
     mime_type = MIME_IMAGE.get(ext, "image/jpeg")
 
     client = _get_client()
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=[
-            types.Part.from_text(text=prompt),
-            types.Part.from_bytes(data=path.read_bytes(), mime_type=mime_type),
-        ],
-        config=_generate_config(system_prompt),
-    )
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[
+                types.Part.from_text(text=prompt),
+                types.Part.from_bytes(data=path.read_bytes(), mime_type=mime_type),
+            ],
+            config=_generate_config(system_prompt),
+        )
+    except Exception as exc:
+        _raise_clean_gemini_error(exc)
     return _build_result(_response_text(response))
 
 
@@ -170,21 +196,27 @@ def _analyze_video_sync(file_path: str, prompt: str, system_prompt: str) -> dict
     mime_type = MIME_VIDEO.get(ext, "video/mp4")
 
     client = _get_client()
-    uploaded_file = client.files.upload(
-        file=str(path),
-        config=types.UploadFileConfig(mimeType=mime_type, displayName=path.name),
-    )
+    try:
+        uploaded_file = client.files.upload(
+            file=str(path),
+            config=types.UploadFileConfig(mimeType=mime_type, displayName=path.name),
+        )
+    except Exception as exc:
+        _raise_clean_gemini_error(exc)
 
     try:
-        active_file = _wait_for_uploaded_file(client, uploaded_file)
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[
-                types.Part.from_text(text=prompt),
-                active_file,
-            ],
-            config=_generate_config(system_prompt),
-        )
+        try:
+            active_file = _wait_for_uploaded_file(client, uploaded_file)
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[
+                    types.Part.from_text(text=prompt),
+                    active_file,
+                ],
+                config=_generate_config(system_prompt),
+            )
+        except Exception as exc:
+            _raise_clean_gemini_error(exc)
         return _build_result(
             _response_text(response),
             [

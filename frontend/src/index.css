@@ -33,13 +33,48 @@
   --secondary-foreground: 48 18% 95%;
   --muted: 40 4% 18.8%;
   --muted-foreground: 45 6% 55%;
-  --accent: 15 60% 60%;
   --accent-foreground: 0 0% 100%;
   --destructive: 0 72% 58%;
   --destructive-foreground: 0 0% 98%;
   --border: 40 5% 22%;
   --input: 40 5% 22%;
   --ring: 15 60% 60%;
+}
+
+/* Claude.ai warm-light palette (Pampas / cream) */
+:root[data-theme="light"] {
+  --bg-app: #ffffff;        /* main chat surface */
+  --bg-sidebar: #fbfaf7;    /* sidebar — very light warm off-white (Claude.ai) */
+  --bg-elevated: #ffffff;   /* cards, input, popovers */
+  --bg-hover: #f0efe9;      /* hover/active on the off-white sidebar */
+  --bg-input: #ffffff;
+  --border-subtle: #ebe9e2;
+  --border-faint: #f1efe9;
+  --text-primary: #3d3a35;  /* warm near-black */
+  --text-secondary: #6c685f;
+  --text-muted: #918d83;
+  --text-faint: #a8a49b;
+  --accent: #c15f3c;        /* Claude crail */
+  --accent-hover: #a94f30;
+
+  --background: 0 0% 100%;
+  --foreground: 40 6% 16%;
+  --card: 0 0% 100%;
+  --card-foreground: 40 6% 16%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 40 6% 16%;
+  --primary: 16 52% 50%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 40 14% 95%;
+  --secondary-foreground: 40 6% 16%;
+  --muted: 40 14% 95%;
+  --muted-foreground: 40 6% 45%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 40 14% 89%;
+  --input: 40 14% 89%;
+  --ring: 16 52% 50%;
 }
 
 html,
@@ -54,8 +89,9 @@ body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: #262624;
+  background: var(--bg-app);
   color: var(--text-primary);
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .font-serif-display {

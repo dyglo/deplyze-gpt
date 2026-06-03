@@ -173,7 +173,7 @@ export default function OutputPanel({ result, isLoading, videoJob, onDownload })
           </span>
           <button
             data-testid="download-video-button"
-            onClick={() => onDownload(result.content)}
+            onClick={() => onDownload(result.content, result.job_id)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all"
             style={{ background: "#C96A2A", color: "#fff" }}
             onMouseEnter={(e) => (e.currentTarget.style.background = "#E07A35")}

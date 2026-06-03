@@ -34,6 +34,7 @@ dist
 
 *token.json*
 *credentials.json*
+*firebase-adminsdk*.json
 
 # Logs and debug files
 npm-debug.log*
@@ -83,6 +84,7 @@ memory/test_credentials.md
 android-sdk/
 .env
 .env.*
+!.env.example
 *.env
 credentials.json
 *.key

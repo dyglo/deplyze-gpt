@@ -1,9 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import axios from "axios";
+import { doc, onSnapshot } from "firebase/firestore";
 import { Eye, Zap, Layers, Globe } from "lucide-react";
+import { db } from "../firebase";
 import Sidebar from "./Sidebar";
 import ChatMessages from "./ChatMessages";
 import ChatInputBar from "./ChatInputBar";
+import DatasetPage from "../pages/DatasetPage";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -15,6 +18,67 @@ const MODELS = [
   { id: "yolo26-sem", label: "YOLO-Sem", desc: "Semantic scene understanding",    icon: Globe },
 ];
 
+function fileTypeFromName(filename = "") {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  return ["mp4", "mov", "avi"].includes(ext) ? "video" : "image";
+}
+
+function inputUrlFromMessage(message) {
+  if (!message.job_id || !message.input_filename) return "";
+  const ext = message.input_filename.includes(".")
+    ? `.${message.input_filename.split(".").pop()}`
+    : "";
+  return `/api/files/uploads/${message.job_id}/input${ext}`;
+}
+
+function messageFromPersisted(message) {
+  if (message.role === "user") {
+    const filename = message.input_filename || "";
+    return {
+      id: message.message_id,
+      type: "user",
+      prompt: message.content,
+      model: message.model,
+      file: filename ? {
+        filename,
+        file_type: fileTypeFromName(filename),
+        objectUrl: message.input_url,
+        url: inputUrlFromMessage(message),
+        session_id: message.session_id,
+      } : null,
+    };
+  }
+
+  if (message.output_type === "error") {
+    return {
+      id: message.message_id,
+      type: "assistant",
+      isLoading: false,
+      model: message.model,
+      result: null,
+      error: message.content,
+      videoJob: null,
+    };
+  }
+
+  const resultType = message.output_type || "text";
+  return {
+    id: message.message_id,
+    type: "assistant",
+    isLoading: false,
+    model: message.model,
+    result: {
+      type: resultType,
+      content: resultType === "text" ? message.content : message.output_url,
+      job_id: message.job_id,
+      detections: message.detections || [],
+      suggestions: message.suggestions || [],
+    },
+    error: null,
+    videoJob: null,
+  };
+}
+
 function greeting() {
   const h = new Date().getHours();
   if (h < 12) return "Good morning";
@@ -22,7 +86,7 @@ function greeting() {
   return "Good evening";
 }
 
-function Greeting() {
+function Greeting({ name }) {
   return (
     <div className="flex items-center justify-center gap-3 mb-7">
       <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
@@ -35,62 +99,150 @@ function Greeting() {
         />
       </svg>
       <h1 className="font-serif-display text-[40px] leading-none" style={{ color: "var(--text-primary)" }}>
-        {greeting()}, Tafar
+        {greeting()}, {name}
       </h1>
     </div>
   );
 }
 
-export default function Studio() {
+export default function Studio({ user, onSignOut }) {
   const [messages, setMessages]         = useState([]);
   const [selectedModel, setSelectedModel] = useState("gemini");
   const [inputPrompt, setInputPrompt]   = useState("");
   const [inputFile, setInputFile]       = useState(null);
   const [isUploading, setIsUploading]   = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState("");
   const [isAnalyzing, setIsAnalyzing]   = useState(false);
-  const pollRef = useRef(null);
+  const [contextFile, setContextFile] = useState(null);
+  const [sessions, setSessions] = useState([]);
+  const [activeSessionId, setActiveSessionId] = useState(null);
+  const [isLoadingSession, setIsLoadingSession] = useState(false);
+  const [view, setView] = useState("chat");
+  const jobUnsubscribeRef = useRef(null);
   const isEmpty = messages.length === 0;
+  const displayName = useMemo(() => user?.displayName || user?.email || "User", [user]);
+  const firstName = useMemo(() => displayName.split("@")[0].split(" ")[0] || "there", [displayName]);
+  const storageKey = useMemo(() => `deplyzegpt.activeSession.${user.uid}`, [user.uid]);
 
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+  useEffect(() => () => {
+    if (jobUnsubscribeRef.current) jobUnsubscribeRef.current();
+  }, []);
+
+  const authHeaders = useCallback(async (extra = {}) => ({
+    ...extra,
+    Authorization: `Bearer ${await user.getIdToken()}`,
+  }), [user]);
+
+  const loadSessions = useCallback(async () => {
+    const { data } = await axios.get(`${API}/sessions`, { headers: await authHeaders() });
+    setSessions(data.sessions || []);
+    return data.sessions || [];
+  }, [authHeaders]);
+
+  const loadSessionMessages = useCallback(async (sessionId) => {
+    setIsLoadingSession(true);
+    try {
+      const { data } = await axios.get(`${API}/sessions/${sessionId}/messages`, {
+        headers: await authHeaders(),
+      });
+      const restored = (data.messages || []).map(messageFromPersisted);
+      setMessages(restored);
+      const lastInput = [...(data.messages || [])].reverse().find(message => message.input_r2_path && message.job_id);
+      if (lastInput) {
+        const filename = lastInput.input_filename || "";
+        setContextFile({
+          filename,
+          file_type: fileTypeFromName(filename),
+          objectUrl: lastInput.input_url,
+          url: inputUrlFromMessage(lastInput),
+          session_id: sessionId,
+        });
+      } else {
+        setContextFile(null);
+      }
+      setActiveSessionId(sessionId);
+      localStorage.setItem(storageKey, sessionId);
+    } finally {
+      setIsLoadingSession(false);
+    }
+  }, [authHeaders, storageKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadSessions()
+      .then((items) => {
+        if (cancelled) return;
+        const saved = localStorage.getItem(storageKey);
+        if (saved && items.some(session => session.session_id === saved)) {
+          loadSessionMessages(saved).catch(() => localStorage.removeItem(storageKey));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [loadSessions, loadSessionMessages, storageKey]);
 
   const updateMessage = useCallback((id, updates) => {
     setMessages(prev => prev.map(m => m.id === id ? { ...m, ...updates } : m));
   }, []);
 
-  const startPolling = useCallback((jobId, assistId) => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      try {
-        const { data } = await axios.get(`${API}/analyze/video/status/${jobId}`);
+  const stopJobListener = useCallback(() => {
+    if (jobUnsubscribeRef.current) {
+      jobUnsubscribeRef.current();
+      jobUnsubscribeRef.current = null;
+    }
+  }, []);
+
+  const startJobListener = useCallback((jobId, assistId) => {
+    stopJobListener();
+    const jobDocument = doc(db, "jobs", user.uid, "items", jobId);
+    jobUnsubscribeRef.current = onSnapshot(
+      jobDocument,
+      async (snapshot) => {
+        if (!snapshot.exists()) return;
+        const data = snapshot.data();
         updateMessage(assistId, { videoJob: data });
-        if (data.status === "done") {
-          clearInterval(pollRef.current);
+
+        if (data.status === "done" && (data.output_url || data.output_key || data.output_r2_path)) {
+          let videoUrl = data.output_url;
+          if (!videoUrl) {
+            const response = await axios.get(`${API}/files/presign/${jobId}`, {
+              headers: await authHeaders(),
+            });
+            videoUrl = response.data.url;
+          }
+          stopJobListener();
           setIsAnalyzing(false);
           updateMessage(assistId, {
             isLoading: false,
             videoJob: data,
-            result: data.output_url ? {
+            result: videoUrl ? {
               type: "video",
-              content: `${BACKEND_URL}${data.output_url}`,
+              content: videoUrl,
+              job_id: jobId,
               detections: [],
               suggestions: ["Analyze frames with Gemini", "Run segmentation", "Download result"],
             } : null,
           });
+          loadSessions().catch(() => {});
         } else if (data.status === "failed") {
-          clearInterval(pollRef.current);
+          stopJobListener();
           setIsAnalyzing(false);
           updateMessage(assistId, { isLoading: false, error: data.error || "Video processing failed", videoJob: data });
         }
-      } catch (e) {
-        clearInterval(pollRef.current);
+      },
+      (error) => {
+        stopJobListener();
         setIsAnalyzing(false);
         updateMessage(assistId, {
           isLoading: false,
-          error: e.response?.data?.detail || "Video status check failed. Please try again.",
+          error: error?.message || "Video status listener failed. Please try again.",
         });
-      }
-    }, 2000);
-  }, [updateMessage]);
+      },
+    );
+  }, [authHeaders, loadSessions, stopJobListener, updateMessage, user.uid]);
 
   const handleFileSelect = useCallback(async (file) => {
     const ext = file.name.split(".").pop().toLowerCase();
@@ -99,34 +251,52 @@ export default function Studio() {
 
     const objectUrl = URL.createObjectURL(file);
     const isImg = file.type.startsWith("image/") || ["jpg","jpeg","png","webp"].includes(ext);
-    // Show file instantly in the input (instant UX)
     setInputFile({ uploading: true, filename: file.name, size: file.size, objectUrl, file_type: isImg ? "image" : "video" });
+    setUploadProgress(0);
+    setUploadError("");
     setIsUploading(true);
 
     try {
       const fd = new FormData();
       fd.append("file", file);
+      if (activeSessionId) fd.append("session_id", activeSessionId);
       const { data } = await axios.post(`${API}/upload`, fd, {
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: await authHeaders(),
+        onUploadProgress: (event) => {
+          if (!event.total) return;
+          setUploadProgress(Math.round((event.loaded * 100) / event.total));
+        },
       });
-      setInputFile(prev => ({ ...data, objectUrl: prev?.objectUrl || objectUrl }));
-    } catch (_) {
-      setInputFile(null);
+      setActiveSessionId(data.session_id);
+      localStorage.setItem(storageKey, data.session_id);
+      setInputFile(prev => ({ ...data, session_id: data.session_id, objectUrl: prev?.objectUrl || objectUrl }));
+      loadSessions().catch(() => {});
+    } catch (error) {
+      setUploadError(error.response?.data?.detail || "Upload failed. Please try again.");
+      setInputFile(prev => prev ? { ...prev, uploading: false } : null);
     } finally {
       setIsUploading(false);
+      setUploadProgress(0);
     }
-  }, []);
+  }, [activeSessionId, authHeaders, loadSessions, storageKey]);
 
   const handleSend = useCallback(async () => {
-    if (isAnalyzing || isUploading || !inputFile || inputFile?.uploading) return;
+    const promptText = inputPrompt.trim();
+    const activeFile = inputFile?.url ? inputFile : contextFile;
+    if (isAnalyzing || isUploading || inputFile?.uploading || !activeFile) return;
+    if (!inputFile?.url && !promptText) return;
 
-    const file    = inputFile;
-    const prompt  = inputPrompt.trim() || `Analyze this ${inputFile.file_type}`;
+    const file    = activeFile;
+    const prompt  = promptText || `Analyze this ${file.file_type}`;
     const model   = selectedModel;
     const isVideo = file.file_type === "video";
+    const sessionId = activeSessionId || file.session_id || null;
 
     setInputPrompt("");
     setInputFile(null);
+    setContextFile(file);
+    setUploadProgress(0);
+    setUploadError("");
     setIsAnalyzing(true);
 
     const userId  = `user-${Date.now()}`;
@@ -139,39 +309,73 @@ export default function Studio() {
     ]);
 
     try {
+      const headers = await authHeaders();
       if (isVideo) {
         if (model === "gemini") {
-          const { data } = await axios.post(`${API}/analyze/video/gemini`, { file_url: file.url, prompt });
+          const { data } = await axios.post(`${API}/analyze/video/gemini`, { file_url: file.url, prompt, session_id: sessionId }, { headers });
+          if (data.session_id) {
+            setActiveSessionId(data.session_id);
+            localStorage.setItem(storageKey, data.session_id);
+          }
           updateMessage(assistId, { isLoading: false, result: data });
           setIsAnalyzing(false);
+          loadSessions().catch(() => {});
         } else {
-          const { data } = await axios.post(`${API}/analyze/video`, { file_url: file.url, model, confidence: 0.25 });
+          const { data } = await axios.post(`${API}/analyze/video`, { file_url: file.url, model, confidence: 0.25, prompt, session_id: sessionId }, { headers });
+          if (data.session_id) {
+            setActiveSessionId(data.session_id);
+            localStorage.setItem(storageKey, data.session_id);
+          }
           updateMessage(assistId, { videoJob: { job_id: data.job_id, status: "queued", progress: 0, model } });
-          startPolling(data.job_id, assistId);
+          startJobListener(data.job_id, assistId);
+          loadSessions().catch(() => {});
         }
       } else {
-        const { data } = await axios.post(`${API}/analyze/image`, { file_url: file.url, model, prompt });
+        const { data } = await axios.post(`${API}/analyze/image`, { file_url: file.url, model, prompt, session_id: sessionId }, { headers });
+        if (data.session_id) {
+          setActiveSessionId(data.session_id);
+          localStorage.setItem(storageKey, data.session_id);
+        }
         updateMessage(assistId, { isLoading: false, result: data });
         setIsAnalyzing(false);
+        loadSessions().catch(() => {});
       }
     } catch (e) {
       updateMessage(assistId, { isLoading: false, error: e.response?.data?.detail || "Analysis failed. Please try again." });
       setIsAnalyzing(false);
     }
-  }, [inputFile, inputPrompt, selectedModel, isAnalyzing, isUploading, updateMessage, startPolling]);
+  }, [activeSessionId, inputFile, contextFile, inputPrompt, selectedModel, isAnalyzing, isUploading, updateMessage, startJobListener, authHeaders, loadSessions, storageKey]);
 
   const handleSuggestionClick = useCallback((s) => {
     setInputPrompt(s);
+    if (contextFile) {
+      setSelectedModel("gemini");
+    }
+  }, [contextFile]);
+
+  const handleClearFile = useCallback(() => {
+    setInputFile(null);
+    setUploadProgress(0);
+    setUploadError("");
   }, []);
 
-  const handleDownloadVideo = async (url) => {
+  const fetchFreshOutputUrl = useCallback(async (jobId, fallbackUrl) => {
+    if (!jobId) return fallbackUrl;
+    const { data } = await axios.get(`${API}/files/presign/${jobId}`, {
+      headers: await authHeaders(),
+    });
+    return data.url;
+  }, [authHeaders]);
+
+  const handleDownloadVideo = async (url, jobId) => {
     let objectUrl = null;
+    const downloadUrl = await fetchFreshOutputUrl(jobId, url);
     try {
-      const response = await fetch(url);
+      const response = await fetch(downloadUrl);
       if (!response.ok) throw new Error("Video download failed");
       const blob = await response.blob();
       objectUrl = URL.createObjectURL(blob);
-      const filename = url.split("/").pop() || "deplyzegpt_output.mp4";
+      const filename = "deplyzegpt_output.mp4";
       const a = Object.assign(document.createElement("a"), {
         href: objectUrl,
         download: filename,
@@ -181,8 +385,8 @@ export default function Studio() {
       document.body.removeChild(a);
     } catch (_) {
       const a = Object.assign(document.createElement("a"), {
-        href: url,
-        download: url.split("/").pop() || "deplyzegpt_output.mp4",
+        href: downloadUrl,
+        download: "deplyzegpt_output.mp4",
       });
       document.body.appendChild(a);
       a.click();
@@ -194,16 +398,26 @@ export default function Studio() {
     }
   };
 
-  const handleDownloadImage = async (content) => {
+  const handleDownloadImage = async (content, jobId) => {
     let objectUrl = null;
+    const downloadUrl = await fetchFreshOutputUrl(jobId, content);
     try {
-      const response = await fetch(content);
+      const response = await fetch(downloadUrl);
+      if (!response.ok) throw new Error("Image download failed");
       const blob = await response.blob();
       objectUrl = URL.createObjectURL(blob);
       const extension = blob.type.includes("png") ? "png" : "jpg";
       const a = Object.assign(document.createElement("a"), {
         href: objectUrl,
         download: `deplyzegpt_output.${extension}`,
+      });
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (_) {
+      const a = Object.assign(document.createElement("a"), {
+        href: downloadUrl,
+        download: "deplyzegpt_output.jpg",
       });
       document.body.appendChild(a);
       a.click();
@@ -216,13 +430,57 @@ export default function Studio() {
   };
 
   const handleNewChat = useCallback(() => {
-    if (pollRef.current) clearInterval(pollRef.current);
+    setView("chat");
+    stopJobListener();
     setMessages([]);
     setInputPrompt("");
     setInputFile(null);
+    setContextFile(null);
+    setActiveSessionId(null);
+    localStorage.removeItem(storageKey);
     setIsAnalyzing(false);
     setIsUploading(false);
-  }, []);
+    setUploadProgress(0);
+    setUploadError("");
+  }, [stopJobListener, storageKey]);
+
+  const handleSelectSession = useCallback((sessionId) => {
+    setView("chat");
+    if (!sessionId || sessionId === activeSessionId) return;
+    stopJobListener();
+    setInputPrompt("");
+    setInputFile(null);
+    setUploadError("");
+    loadSessionMessages(sessionId).catch(() => {});
+  }, [activeSessionId, loadSessionMessages, stopJobListener]);
+
+  const handleRenameSession = useCallback(async (sessionId, name) => {
+    const cleanName = name.trim();
+    if (!sessionId || !cleanName) return;
+    await axios.patch(`${API}/sessions/${sessionId}`, { name: cleanName }, {
+      headers: await authHeaders(),
+    });
+    await loadSessions();
+  }, [authHeaders, loadSessions]);
+
+  const handleTogglePinSession = useCallback(async (session) => {
+    if (!session?.session_id) return;
+    await axios.patch(`${API}/sessions/${session.session_id}`, { pinned: !session.pinned }, {
+      headers: await authHeaders(),
+    });
+    await loadSessions();
+  }, [authHeaders, loadSessions]);
+
+  const handleDeleteSession = useCallback(async (sessionId) => {
+    if (!sessionId) return;
+    await axios.delete(`${API}/sessions/${sessionId}`, {
+      headers: await authHeaders(),
+    });
+    if (sessionId === activeSessionId) {
+      handleNewChat();
+    }
+    await loadSessions();
+  }, [activeSessionId, authHeaders, handleNewChat, loadSessions]);
 
   return (
     <div
@@ -230,36 +488,40 @@ export default function Studio() {
       style={{ background: "var(--bg-app)", color: "var(--text-primary)", fontFamily: "'Inter', sans-serif" }}
       className="h-screen w-full flex overflow-hidden"
     >
-      <Sidebar onNewChat={handleNewChat} />
+      <Sidebar
+        onNewChat={handleNewChat}
+        user={user}
+        onSignOut={onSignOut}
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        isLoadingSessions={isLoadingSession}
+        onSelectSession={handleSelectSession}
+        onRenameSession={handleRenameSession}
+        onTogglePinSession={handleTogglePinSession}
+        onDeleteSession={handleDeleteSession}
+        activeView={view}
+        onSelectView={setView}
+      />
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <header
-          data-testid="studio-header"
-          className="flex-none px-4 py-2.5 flex items-center justify-end"
-        >
-          <span
-            className="text-xs px-2.5 py-1 rounded-md font-medium"
-            style={{ background: "var(--bg-elevated)", color: "var(--text-muted)" }}
-          >
-            Free
-          </span>
-        </header>
-
-        {isEmpty ? (
-          /* Empty state — greeting + input centered together (Claude home) */
+        {view === "dataset" ? (
+          <DatasetPage onNewDataset={() => {}} />
+        ) : isEmpty ? (
           <div className="flex-1 flex flex-col items-center justify-center overflow-y-auto px-4">
             <div className="w-full" style={{ maxWidth: "768px" }}>
-              <Greeting />
+              <Greeting name={firstName} />
               <ChatInputBar
                 prompt={inputPrompt}
                 onPromptChange={setInputPrompt}
                 onSend={handleSend}
                 onFileSelect={handleFileSelect}
                 inputFile={inputFile}
-                onClearFile={() => setInputFile(null)}
+                onClearFile={handleClearFile}
                 isUploading={isUploading}
+                uploadProgress={uploadProgress}
+                uploadError={uploadError}
                 isAnalyzing={isAnalyzing}
+                hasContextFile={Boolean(contextFile)}
                 selectedModel={selectedModel}
                 onModelSelect={setSelectedModel}
                 models={MODELS}
@@ -270,7 +532,6 @@ export default function Studio() {
             </div>
           </div>
         ) : (
-          /* Conversation — messages scroll, input pinned to bottom */
           <>
             <ChatMessages
               messages={messages}
@@ -284,9 +545,12 @@ export default function Studio() {
               onSend={handleSend}
               onFileSelect={handleFileSelect}
               inputFile={inputFile}
-              onClearFile={() => setInputFile(null)}
+              onClearFile={handleClearFile}
               isUploading={isUploading}
+              uploadProgress={uploadProgress}
+              uploadError={uploadError}
               isAnalyzing={isAnalyzing}
+              hasContextFile={Boolean(contextFile)}
               selectedModel={selectedModel}
               onModelSelect={setSelectedModel}
               models={MODELS}
