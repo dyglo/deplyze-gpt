@@ -1,0 +1,141 @@
+{
+  "theme": "dark",
+  "archetype": "4 (Swiss & High-Contrast) + Earthy Accent",
+  "typography": {
+    "font_family": {
+      "headings": "Outfit, sans-serif",
+      "body": "Outfit, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "scale": {
+      "h1": "text-2xl font-bold tracking-tight",
+      "h2": "text-xl font-semibold tracking-tight",
+      "h3": "text-lg font-medium",
+      "body": "text-sm leading-relaxed",
+      "small": "text-xs font-mono tracking-wider uppercase"
+    }
+  },
+  "colors": {
+    "background": "#111111",
+    "surface": "#1A1A1A",
+    "surface_hover": "#222222",
+    "primary": "#C96A2A",
+    "primary_hover": "#E07A35",
+    "text_main": "#FFFFFF",
+    "text_muted": "#A1A1AA",
+    "border": "#2A2A2A",
+    "error": "#EF4444",
+    "success": "#10B981"
+  },
+  "layout": {
+    "container": "h-screen w-full flex flex-col bg-[#111111] overflow-hidden text-white font-sans",
+    "grid": "flex-1 grid grid-cols-1 md:grid-cols-[400px_1fr] lg:grid-cols-[450px_1fr] overflow-hidden"
+  },
+  "components": {
+    "job_banner": {
+      "description": "Sticky top banner for job persistence.",
+      "styles": "w-full bg-[#C96A2A]/10 border-b border-[#C96A2A]/20 px-4 py-2 flex items-center justify-between text-sm text-[#C96A2A]",
+      "data_testid": "job-persistence-banner"
+    },
+    "left_column": {
+      "description": "Left sidebar container for inputs and controls.",
+      "styles": "flex flex-col h-full border-r border-[#2A2A2A] bg-[#111111] overflow-y-auto",
+      "data_testid": "studio-left-column"
+    },
+    "right_column": {
+      "description": "Right container for outputs.",
+      "styles": "flex flex-col h-full bg-[#151515] p-4 lg:p-6 overflow-hidden relative",
+      "data_testid": "studio-right-column"
+    },
+    "upload_zone": {
+      "description": "Drag and drop area for media files.",
+      "styles": "border-2 border-dashed border-[#2A2A2A] rounded-xl p-8 flex flex-col items-center justify-center gap-3 transition-colors hover:border-[#C96A2A]/50 bg-[#151515] text-[#A1A1AA] hover:text-white cursor-pointer group",
+      "data_testid": "media-upload-zone"
+    },
+    "model_selector": {
+      "description": "Grid of 4 selectable models (Gemini, YOLO26, YOLO26-Seg, YOLO26-Sem).",
+      "layout": "grid grid-cols-2 gap-3",
+      "card_styles": "p-4 rounded-lg border border-[#2A2A2A] bg-[#1A1A1A] cursor-pointer transition-all hover:bg-[#222222] hover:border-[#333333]",
+      "active_card_styles": "border-[#C96A2A] shadow-[0_0_12px_rgba(201,106,42,0.15)] bg-[#C96A2A]/10 text-white",
+      "data_testid": "model-selector-card"
+    },
+    "chat_input": {
+      "description": "Input field for prompts and slash commands. Stick to bottom of left column.",
+      "wrapper_styles": "mt-auto pt-4 pb-4 px-6 border-t border-[#2A2A2A] bg-[#111111] sticky bottom-0",
+      "input_styles": "w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-[#C96A2A] focus:ring-1 focus:ring-[#C96A2A] text-white placeholder-[#A1A1AA]",
+      "data_testid": "chat-prompt-input"
+    },
+    "suggestion_chips": {
+      "description": "Quick follow-up actions or common prompts. Place above chat input.",
+      "styles": "flex flex-wrap gap-2 mb-3",
+      "chip_styles": "px-3 py-1.5 rounded-full bg-[#1A1A1A] border border-[#2A2A2A] text-xs text-[#A1A1AA] hover:text-white hover:border-[#C96A2A] transition-colors cursor-pointer",
+      "data_testid": "suggestion-chip"
+    },
+    "output_panel": {
+      "description": "Main area for viewing visual analysis results.",
+      "wrapper_styles": "flex-1 border border-[#2A2A2A] rounded-xl bg-[#111111] overflow-hidden flex flex-col relative shadow-sm",
+      "canvas_styles": "flex-1 flex items-center justify-center p-4 overflow-hidden relative",
+      "text_results_styles": "p-4 border-t border-[#2A2A2A] bg-[#151515] text-sm text-[#E4E4E7] font-mono overflow-y-auto max-h-[30%]",
+      "data_testid": "visual-output-panel"
+    },
+    "progress_bar": {
+      "description": "Loader for video processing.",
+      "wrapper_styles": "w-full h-1.5 bg-[#2A2A2A] rounded-full overflow-hidden mt-4",
+      "fill_styles": "h-full bg-[#C96A2A] transition-all duration-300 ease-out",
+      "data_testid": "processing-progress-bar"
+    },
+    "skeleton_loader": {
+      "description": "Skeleton for processing states. No spinners.",
+      "styles": "animate-pulse bg-[#1A1A1A] rounded-xl w-full h-full absolute inset-0",
+      "data_testid": "skeleton-loader"
+    },
+    "inline_error": {
+      "description": "Error message display instead of toasts.",
+      "styles": "text-[#EF4444] text-xs font-medium mt-1 flex items-center gap-1",
+      "data_testid": "inline-error-message"
+    }
+  },
+  "media": {
+    "icons": "lucide-react",
+    "images": [
+      {
+        "url": "https://images.unsplash.com/photo-1625556841726-ee3959350033?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzh8MHwxfHNlYXJjaHwzfHx1cmJhbiUyMHN0cmVldCUyMHRyYWZmaWN8ZW58MHx8fHwxNzgwNDc1NjExfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Urban street traffic daytime",
+        "category": "sample_upload"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1551075777-dd8acbe05035?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzh8MHwxfHNlYXJjaHwxfHx1cmJhbiUyMHN0cmVldCUyMHRyYWZmaWN8ZW58MHx8fHwxNzgwNDc1NjExfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Urban street traffic night lapse",
+        "category": "sample_upload"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1611965008308-f117c8ca80fd?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzh8MHwxfHNlYXJjaHwyfHx1cmJhbiUyMHN0cmVldCUyMHRyYWZmaWN8ZW58MHx8fHwxNzgwNDc1NjExfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Urban street daytime parked cars",
+        "category": "sample_upload"
+      }
+    ]
+  },
+  "interactions": {
+    "hover_states": "All interactive elements must lighten their background or border slightly and boost contrast. Text must become #FFFFFF on hover.",
+    "focus_states": "Visible focus ring required: focus:outline-none focus:ring-1 focus:ring-[#C96A2A] focus:border-[#C96A2A]",
+    "animations": "Subtle skeleton pulsing for loaders. Progress bar must use a smooth CSS width transition. Model card selection scale: active:scale-[0.98]."
+  },
+  "accessibility": {
+    "contrast": "Text must meet WCAG AA standards. Buttons must have a minimum 3:1 contrast ratio against the #111111 background.",
+    "testing": "All interactive elements MUST have the data-testid attributes defined in the components section."
+  },
+  "instructions_to_main_agent": [
+    "Build a single-page React app (no react-router).",
+    "Layout Strategy: Create a full-height screen (h-screen) with a top banner and a 2-column grid. Set overflow-hidden on the main container, allowing ONLY the left sidebar to scroll vertically (overflow-y-auto).",
+    "Left Column Layout: Should contain the Upload Zone, Model Selector (2x2 grid), and the Chat Input sticky at the bottom.",
+    "Right Column Layout: Should house the Output Panel, extending full height. Inside, use flex layout to position the image/video canvas at the top and the text results pane at the bottom.",
+    "Theme Enforcement: Strictly adhere to the dark mode palette. Background is #111111, accents are #C96A2A. Do not use generic gray or blue accents. Do NOT implement a light mode toggle.",
+    "Typography: Use 'Outfit' from Google Fonts for all general text and headings. Use 'JetBrains Mono' for text results and slash commands.",
+    "Components: Use pure Tailwind CSS and headless UI patterns. For form elements, customize them to match the dark earthy tech theme without using standard light-mode Shadcn presets.",
+    "Interactivity: When an image/video is selected, replace the Upload Zone with a minimal file preview.",
+    "Loading State: Do NOT use loading spinners. Implement the provided skeleton_loader classes overlaying the output canvas while processing.",
+    "Error Handling: All errors MUST be rendered inline below the relevant component (e.g. invalid file type shown right under the dropzone in text-[#EF4444]). Do not use global toast notifications for validation errors.",
+    "Slash Commands: Build a slash command popover inside the Chat Input that triggers when the user types '/'.",
+    "Testing: You MUST assign the provided data-testid attributes to all interactive elements to ensure test pass rates."
+  ]
+}
