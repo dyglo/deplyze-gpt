@@ -136,6 +136,8 @@ async def analyze_image(request: ImageAnalysisRequest):
             return await loop.run_in_executor(
                 executor, analyze_image_yolo, str(filepath), request.model, request.confidence
             )
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
     except Exception as e:
         logger.error(f"Image analysis error: {e}", exc_info=True)
         raise HTTPException(500, f"Analysis failed: {str(e)[:300]}")
