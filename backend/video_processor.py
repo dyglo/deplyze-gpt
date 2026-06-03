@@ -7,6 +7,21 @@ from pymongo import MongoClient
 
 logger = logging.getLogger(__name__)
 
+STANDARD_TARGET_FPS = 10.0
+SEMANTIC_MAX_OUTPUT_SIDE = 960
+SEMANTIC_IMGSZ = 512
+
+
+def _scaled_output_size(width: int, height: int, max_side: int) -> tuple:
+    longest = max(width, height)
+    if longest <= max_side:
+        return width, height
+
+    scale = max_side / longest
+    out_width = max(2, int(round(width * scale / 2) * 2))
+    out_height = max(2, int(round(height * scale / 2) * 2))
+    return out_width, out_height
+
 
 def process_video_yolo(
     job_id: str,
@@ -21,7 +36,7 @@ def process_video_yolo(
     Updates job progress in MongoDB synchronously.
     Returns the final output path.
     """
-    from yolo_service import get_model
+    from yolo_service import get_model, render_clean_annotations
 
     mongo_url = os.environ['MONGO_URL']
     db_name = os.environ['DB_NAME']
@@ -51,23 +66,46 @@ def process_video_yolo(
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 500
+        is_semantic = model_type == 'yolo26-sem'
+        sample_every = 1 if is_semantic else max(1, round(fps / STANDARD_TARGET_FPS))
+        out_width, out_height = (
+            _scaled_output_size(width, height, SEMANTIC_MAX_OUTPUT_SIDE)
+            if is_semantic else (width, height)
+        )
 
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        out = cv2.VideoWriter(temp_path, fourcc, fps, (width, height))
+        out = cv2.VideoWriter(temp_path, fourcc, fps, (out_width, out_height))
 
         if not out.isOpened():
             raise ValueError("Failed to initialize VideoWriter")
 
         update_progress(5)
         frame_num = 0
+        last_result = None
 
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
 
-            results = model.predict(frame, conf=confidence, verbose=False)
-            annotated = results[0].plot()
+            output_frame = (
+                cv2.resize(frame, (out_width, out_height), interpolation=cv2.INTER_AREA)
+                if (out_width, out_height) != (width, height) else frame
+            )
+
+            if is_semantic or frame_num % sample_every == 0 or last_result is None:
+                predict_kwargs = {"verbose": False}
+                if is_semantic:
+                    predict_kwargs["imgsz"] = SEMANTIC_IMGSZ
+                else:
+                    predict_kwargs["conf"] = confidence
+                results = model.predict(output_frame, **predict_kwargs)
+                last_result = results[0]
+            if last_result is not None:
+                annotated = render_clean_annotations(last_result, output_frame)
+            else:
+                annotated = output_frame
+
             out.write(annotated)
             frame_num += 1
 

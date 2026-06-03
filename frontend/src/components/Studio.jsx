@@ -15,6 +15,32 @@ const MODELS = [
   { id: "yolo26-sem", label: "YOLO-Sem", desc: "Semantic scene understanding",    icon: Globe },
 ];
 
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+function Greeting() {
+  return (
+    <div className="flex items-center justify-center gap-3 mb-7">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+        <path
+          d="M12 2.2c.35 2.5.9 3.6 2 4.6m0 0c1.1 1 2.2 1.5 4.6 1.85M14 6.8 18.6 8.65M12 2.2c-.35 2.5-.9 3.6-2 4.6m0 0c-1.1 1-2.2 1.5-4.6 1.85M10 6.8 5.4 8.65M12 21.8c.35-2.5.9-3.6 2-4.6m0 0c1.1-1 2.2-1.5 4.6-1.85M14 17.2l4.6-1.85M12 21.8c-.35-2.5-.9-3.6-2-4.6m0 0c-1.1-1-2.2-1.5-4.6-1.85M10 17.2 5.4 15.35M2.2 12c2.5.35 3.6.9 4.6 2m0 0c1 1.1 1.5 2.2 1.85 4.6M6.8 14l1.85 4.6M2.2 12c2.5-.35 3.6-.9 4.6-2m0 0c1-1.1 1.5-2.2 1.85-4.6M6.8 10 8.65 5.4M21.8 12c-2.5.35-3.6.9-4.6 2m0 0c-1 1.1-1.5 2.2-1.85 4.6M17.2 14l-1.85 4.6M21.8 12c-2.5-.35-3.6-.9-4.6-2m0 0c-1-1.1-1.5-2.2-1.85-4.6M17.2 10l-1.85-4.6"
+          stroke="var(--accent)"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      <h1 className="font-serif-display text-[40px] leading-none" style={{ color: "var(--text-primary)" }}>
+        {greeting()}, Tafar
+      </h1>
+    </div>
+  );
+}
+
 export default function Studio() {
   const [messages, setMessages]         = useState([]);
   const [selectedModel, setSelectedModel] = useState("gemini");
@@ -23,6 +49,7 @@ export default function Studio() {
   const [isUploading, setIsUploading]   = useState(false);
   const [isAnalyzing, setIsAnalyzing]   = useState(false);
   const pollRef = useRef(null);
+  const isEmpty = messages.length === 0;
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
@@ -54,9 +81,13 @@ export default function Studio() {
           setIsAnalyzing(false);
           updateMessage(assistId, { isLoading: false, error: data.error || "Video processing failed", videoJob: data });
         }
-      } catch (_) {
+      } catch (e) {
         clearInterval(pollRef.current);
         setIsAnalyzing(false);
+        updateMessage(assistId, {
+          isLoading: false,
+          error: e.response?.data?.detail || "Video status check failed. Please try again.",
+        });
       }
     }, 2000);
   }, [updateMessage]);
@@ -134,16 +165,54 @@ export default function Studio() {
   }, []);
 
   const handleDownloadVideo = async (url) => {
+    let objectUrl = null;
     try {
-      const blob = await fetch(url).then(r => r.blob());
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Video download failed");
+      const blob = await response.blob();
+      objectUrl = URL.createObjectURL(blob);
+      const filename = url.split("/").pop() || "deplyzegpt_output.mp4";
       const a = Object.assign(document.createElement("a"), {
-        href: URL.createObjectURL(blob),
-        download: "deplyzegpt_output.mp4",
+        href: objectUrl,
+        download: filename,
       });
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-    } catch (_) {}
+    } catch (_) {
+      const a = Object.assign(document.createElement("a"), {
+        href: url,
+        download: url.split("/").pop() || "deplyzegpt_output.mp4",
+      });
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } finally {
+      if (objectUrl) {
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      }
+    }
+  };
+
+  const handleDownloadImage = async (content) => {
+    let objectUrl = null;
+    try {
+      const response = await fetch(content);
+      const blob = await response.blob();
+      objectUrl = URL.createObjectURL(blob);
+      const extension = blob.type.includes("png") ? "png" : "jpg";
+      const a = Object.assign(document.createElement("a"), {
+        href: objectUrl,
+        download: `deplyzegpt_output.${extension}`,
+      });
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } finally {
+      if (objectUrl) {
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      }
+    }
   };
 
   const handleNewChat = useCallback(() => {
@@ -158,7 +227,7 @@ export default function Studio() {
   return (
     <div
       data-testid="studio-container"
-      style={{ background: "#111111", color: "#fff", fontFamily: "'Outfit', sans-serif" }}
+      style={{ background: "var(--bg-app)", color: "var(--text-primary)", fontFamily: "'Inter', sans-serif" }}
       className="h-screen w-full flex overflow-hidden"
     >
       <Sidebar onNewChat={handleNewChat} />
@@ -167,50 +236,65 @@ export default function Studio() {
         {/* Header */}
         <header
           data-testid="studio-header"
-          className="flex-none px-5 py-3 flex items-center justify-between"
-          style={{ borderBottom: "1px solid #1C1C1C" }}
+          className="flex-none px-4 py-2.5 flex items-center justify-end"
         >
-          <div className="flex items-center gap-2.5">
-            <div
-              className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-              style={{ background: "#C96A2A" }}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                <circle cx="12" cy="12" r="3"/>
-              </svg>
-            </div>
-            <span className="font-semibold text-sm tracking-tight">DeplyzeGPT</span>
-          </div>
           <span
-            className="text-xs px-2 py-0.5 rounded"
-            style={{ background: "#1A1A1A", color: "#555", border: "1px solid #222" }}
+            className="text-xs px-2.5 py-1 rounded-md font-medium"
+            style={{ background: "var(--bg-elevated)", color: "var(--text-muted)" }}
           >
             Free
           </span>
         </header>
 
-        {/* Chat messages area */}
-        <ChatMessages
-          messages={messages}
-          onSuggestionClick={handleSuggestionClick}
-          onDownload={handleDownloadVideo}
-        />
-
-        {/* Input bar */}
-        <ChatInputBar
-          prompt={inputPrompt}
-          onPromptChange={setInputPrompt}
-          onSend={handleSend}
-          onFileSelect={handleFileSelect}
-          inputFile={inputFile}
-          onClearFile={() => setInputFile(null)}
-          isUploading={isUploading}
-          isAnalyzing={isAnalyzing}
-          selectedModel={selectedModel}
-          onModelSelect={setSelectedModel}
-          models={MODELS}
-        />
+        {isEmpty ? (
+          /* Empty state — greeting + input centered together (Claude home) */
+          <div className="flex-1 flex flex-col items-center justify-center overflow-y-auto px-4">
+            <div className="w-full" style={{ maxWidth: "768px" }}>
+              <Greeting />
+              <ChatInputBar
+                prompt={inputPrompt}
+                onPromptChange={setInputPrompt}
+                onSend={handleSend}
+                onFileSelect={handleFileSelect}
+                inputFile={inputFile}
+                onClearFile={() => setInputFile(null)}
+                isUploading={isUploading}
+                isAnalyzing={isAnalyzing}
+                selectedModel={selectedModel}
+                onModelSelect={setSelectedModel}
+                models={MODELS}
+                showSuggestions
+                onSuggestionClick={handleSuggestionClick}
+                centered
+              />
+            </div>
+          </div>
+        ) : (
+          /* Conversation — messages scroll, input pinned to bottom */
+          <>
+            <ChatMessages
+              messages={messages}
+              onSuggestionClick={handleSuggestionClick}
+              onDownload={handleDownloadVideo}
+              onDownloadImage={handleDownloadImage}
+            />
+            <ChatInputBar
+              prompt={inputPrompt}
+              onPromptChange={setInputPrompt}
+              onSend={handleSend}
+              onFileSelect={handleFileSelect}
+              inputFile={inputFile}
+              onClearFile={() => setInputFile(null)}
+              isUploading={isUploading}
+              isAnalyzing={isAnalyzing}
+              selectedModel={selectedModel}
+              onModelSelect={setSelectedModel}
+              models={MODELS}
+              showSuggestions={false}
+              onSuggestionClick={handleSuggestionClick}
+            />
+          </>
+        )}
       </div>
     </div>
   );
