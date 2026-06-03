@@ -2,7 +2,7 @@ import React, { useRef, useEffect } from "react";
 import { Download, Film, AlertCircle, Loader2 } from "lucide-react";
 
 const MODEL_LABELS = {
-  gemini: "Gemini 3-Flash",
+  gemini: "Gemini 2.5 Flash-Lite",
   yolo26: "YOLO26 Detection",
   "yolo26-seg": "YOLO26 Segmentation",
   "yolo26-sem": "YOLO26 Semantic",
@@ -204,7 +204,7 @@ function AssistantMessage({ message, onSuggestionClick, onDownload, onDownloadIm
             <button
               data-testid="download-image-button"
               type="button"
-              onClick={() => onDownloadImage(result.content)}
+              onClick={() => onDownloadImage(result.content, result.job_id)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors"
               style={{ background: "var(--accent)", color: "#fff" }}
               onMouseEnter={e => e.currentTarget.style.background = "var(--accent-hover)"}
@@ -261,7 +261,7 @@ function AssistantMessage({ message, onSuggestionClick, onDownload, onDownloadIm
             <button
               data-testid="download-video-button"
               type="button"
-              onClick={() => onDownload(result.content)}
+              onClick={() => onDownload(result.content, result.job_id)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors"
               style={{ background: "var(--accent)", color: "#fff" }}
               onMouseEnter={e => e.currentTarget.style.background = "var(--accent-hover)"}

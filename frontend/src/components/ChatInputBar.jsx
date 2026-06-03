@@ -16,6 +16,8 @@ export default function ChatInputBar({
   inputFile,
   onClearFile,
   isUploading,
+  uploadProgress = 0,
+  uploadError = "",
   isAnalyzing,
   selectedModel,
   onModelSelect,
@@ -23,6 +25,7 @@ export default function ChatInputBar({
   showSuggestions,
   onSuggestionClick,
   centered,
+  hasContextFile = false,
 }) {
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
@@ -30,20 +33,20 @@ export default function ChatInputBar({
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   const currentModel = models.find(m => m.id === selectedModel) || models[0];
-  const canSend = !isAnalyzing && !isUploading && !!inputFile && !inputFile?.uploading;
+  const hasPrompt = prompt.trim().length > 0;
+  const canSend = !isAnalyzing && !isUploading && !inputFile?.uploading && !uploadError && (
+    !!inputFile?.url || (hasContextFile && hasPrompt)
+  );
 
   const resizeTextarea = useCallback(() => {
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = Math.min(ta.scrollHeight, 180) + "px";
+    ta.style.height = Math.max(56, Math.min(ta.scrollHeight, 180)) + "px";
   }, []);
 
   useEffect(() => {
     resizeTextarea();
-    if (!prompt && textareaRef.current) {
-      textareaRef.current.style.height = "24px";
-    }
   }, [prompt, resizeTextarea]);
 
   useEffect(() => {
@@ -78,7 +81,8 @@ export default function ChatInputBar({
           }}
         >
           {inputFile && (
-            <div className="px-4 pt-3.5 pb-1 flex items-center gap-2">
+            <div className="px-4 pt-3.5 pb-1 flex flex-col items-start gap-2">
+              <div className="flex items-center gap-2">
               {inputFile.file_type === "image" && inputFile.objectUrl ? (
                 <div className="relative inline-flex flex-shrink-0">
                   <img
@@ -89,9 +93,12 @@ export default function ChatInputBar({
                     style={{ border: "1px solid var(--border-subtle)" }}
                   />
                   {(isUploading || inputFile.uploading) && (
-                    <div className="absolute inset-0 flex items-center justify-center rounded-xl"
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-xl"
                       style={{ background: "rgba(0,0,0,0.5)" }}>
                       <Loader2 size={14} className="animate-spin" style={{ color: "var(--accent)" }} />
+                      <span className="text-[10px] font-medium" style={{ color: "var(--text-primary)" }}>
+                        {uploadProgress}%
+                      </span>
                     </div>
                   )}
                   <button
@@ -104,22 +111,40 @@ export default function ChatInputBar({
                   </button>
                 </div>
               ) : (
-                <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl"
+                <div className="min-w-0 px-3 py-2 rounded-xl"
                   style={{ background: "var(--bg-hover)", border: "1px solid var(--border-subtle)" }}>
-                  <Film size={13} style={{ color: "var(--accent)" }} />
-                  <span className="text-xs" style={{
-                    color: "var(--text-secondary)", maxWidth: "160px",
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
-                  }}>
-                    {inputFile.filename}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <Film size={13} style={{ color: "var(--accent)" }} />
+                    <span className="text-xs" style={{
+                      color: "var(--text-secondary)", maxWidth: "160px",
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
+                    }}>
+                      {inputFile.filename}
+                    </span>
+                    {(isUploading || inputFile.uploading) && (
+                      <span className="text-[10px] tabular-nums" style={{ color: "var(--accent)" }}>
+                        {uploadProgress}%
+                      </span>
+                    )}
+                    <button data-testid="clear-file-button" onClick={onClearFile} className="ml-0.5">
+                      <X size={11} style={{ color: "var(--text-muted)" }} />
+                    </button>
+                  </div>
                   {(isUploading || inputFile.uploading) && (
-                    <Loader2 size={11} className="animate-spin flex-shrink-0" style={{ color: "var(--accent)" }} />
+                    <div className="mt-2 h-1 w-full rounded-full overflow-hidden" style={{ background: "var(--border-subtle)" }}>
+                      <div
+                        className="h-full rounded-full transition-all duration-200"
+                        style={{ width: `${uploadProgress}%`, background: "var(--accent)" }}
+                      />
+                    </div>
                   )}
-                  <button data-testid="clear-file-button" onClick={onClearFile} className="ml-0.5">
-                    <X size={11} style={{ color: "var(--text-muted)" }} />
-                  </button>
                 </div>
+              )}
+              </div>
+              {uploadError && (
+                <p className="text-xs" style={{ color: "#EF4444" }}>
+                  {uploadError}
+                </p>
               )}
             </div>
           )}
@@ -132,16 +157,19 @@ export default function ChatInputBar({
             onKeyDown={handleKeyDown}
             placeholder="How can I help you today?"
             rows={1}
-            className="w-full resize-none text-[15px] px-5 focus:outline-none"
+            className="block w-full resize-none text-[15px] px-5 focus:outline-none"
             style={{
-              boxSizing: "content-box",
+              boxSizing: "border-box",
               background: "transparent",
               color: "var(--text-primary)",
               lineHeight: "24px",
               paddingTop: "16px",
               paddingBottom: "12px",
-              minHeight: "24px",
+              minHeight: "56px",
               maxHeight: "180px",
+              whiteSpace: "pre-wrap",
+              overflowWrap: "break-word",
+              wordBreak: "break-word",
             }}
           />
 
@@ -253,7 +281,7 @@ export default function ChatInputBar({
                   data-testid="analyze-send-button"
                   onClick={() => canSend && onSend()}
                   disabled
-                  title="Attach a file first"
+                  title={hasContextFile ? "Type a follow-up" : "Attach a file first"}
                   className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
                   style={{ background: "transparent", cursor: "not-allowed" }}
                 >

@@ -1,121 +1,221 @@
 # DeplyzeGPT
 
-Computer vision studio for image and video analysis with Gemini vision, YOLO26 detection, YOLO26 instance segmentation, and YOLO26 semantic segmentation.
+DeplyzeGPT is an authenticated computer vision studio for image and video analysis. It combines a Claude-style React workspace, a FastAPI backend, Firebase Auth, Firestore session history, Cloudflare R2 object storage, Gemini multimodal analysis, and YOLO26 detection/segmentation models.
 
-![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?logo=fastapi&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white)
-![MongoDB](https://img.shields.io/badge/MongoDB-7-47A248?logo=mongodb&logoColor=white)
-![Ultralytics](https://img.shields.io/badge/Ultralytics-YOLO26-111111)
-![OpenCV](https://img.shields.io/badge/OpenCV-Video-5C3EE8?logo=opencv&logoColor=white)
-![FFmpeg](https://img.shields.io/badge/FFmpeg-H.264-007808?logo=ffmpeg&logoColor=white)
+## Current Capabilities
 
-## Features
+- Firebase-authenticated Studio UI.
+- Image and video uploads streamed to Cloudflare R2.
+- Upload progress in the frontend.
+- Persistent named sessions stored per user in Firestore.
+- Sidebar session list with newest-first ordering, pinned sessions, rename, pin/unpin, and delete.
+- Full multi-turn conversation restore from Firestore.
+- Fresh one-hour R2 presigned URLs generated when session messages are read.
+- Gemini image and video analysis with `gemini-2.5-flash-lite`.
+- YOLO26 object detection, instance segmentation, and semantic segmentation.
+- Firestore-backed video job status updates.
 
-- Chat-style Studio UI for image and video uploads.
-- Gemini text analysis for images and videos.
-- YOLO26 object detection with annotated image/video output.
-- YOLO26-Seg instance segmentation with visible mask overlays.
-- YOLO26-Sem semantic scene segmentation with class-color overlays and legend.
-- Async video jobs with progress polling, MP4 output, and download buttons.
-- Annotated image download for detection, segmentation, and semantic outputs.
+## Architecture
+
+```text
+frontend/
+  React + CRA + Firebase client SDK
+  Auth, Studio chat UI, persistent sidebar sessions
+
+backend/
+  FastAPI
+  Firebase Admin auth middleware
+  Firestore job/session persistence
+  Cloudflare R2 object storage
+  Gemini and YOLO analysis routes
+
+firestore.rules
+  Per-user access for jobs and sessions
+```
+
+## Data Model
+
+Firestore session documents:
+
+```text
+sessions/{uid}/items/{session_id}
+  name
+  model
+  pinned
+  created_at
+  updated_at
+```
+
+Firestore message documents:
+
+```text
+sessions/{uid}/items/{session_id}/messages/{message_id}
+  role
+  content
+  input_filename
+  input_r2_path
+  output_r2_path
+  output_type
+  job_id
+  model
+  created_at
+```
+
+Firestore job documents:
+
+```text
+jobs/{uid}/items/{job_id}
+```
+
+R2 object paths are stored in Firestore. Presigned URLs are never stored; the backend creates fresh read URLs when messages or outputs are requested.
 
 ## Requirements
 
-- Python 3.14+
-- Node.js 24+ and npm
-- Docker Desktop, for MongoDB
-- FFmpeg available on `PATH`
+- Windows PowerShell, or equivalent shell with command adjustments.
+- Python available at `C:\Python314\python.exe` for the current local setup.
+- Node.js and npm.
+- Firebase project with Auth and Firestore enabled.
+- Firebase service account JSON in the repo root, or `FIREBASE_SERVICE_ACCOUNT_PATH` pointing to it.
+- Cloudflare R2 bucket and S3-compatible access keys.
+- Gemini API key.
+- FFmpeg on `PATH` for video output workflows.
 
-The YOLO model weights live in `backend/`:
+YOLO weights are expected in `backend/` or downloaded on first use:
 
 - `yolo26n.pt`
 - `yolo26n-seg.pt`
 - `yolo26n-sem.pt`
 
-If a weight is missing, the backend attempts to download the official Ultralytics weight on first use.
-
 ## Environment
 
-Backend environment variables:
+Create `backend/.env`:
 
-```powershell
-$env:MONGO_URL="mongodb://127.0.0.1:27017"
-$env:DB_NAME="deplyzegpt"
-$env:CORS_ORIGINS="*"
+```dotenv
+R2_BUCKET_NAME=deplyzegpt-storage
+R2_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=<r2-access-key-id>
+R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
+
+FIREBASE_SERVICE_ACCOUNT_PATH=../vision-sys-firebase-adminsdk-example.json
+
+GEMINI_API_KEY=<gemini-api-key>
+GEMINI_MODEL=gemini-2.5-flash-lite
 ```
 
-Optional Gemini support:
+Create `frontend/.env`:
 
-```powershell
-$env:GEMINI_API_KEY="your-api-key"
+```dotenv
+REACT_APP_FIREBASE_API_KEY=<firebase-web-api-key>
+REACT_APP_FIREBASE_AUTH_DOMAIN=<project>.firebaseapp.com
+REACT_APP_FIREBASE_PROJECT_ID=<project>
+REACT_APP_FIREBASE_STORAGE_BUCKET=<project>.firebasestorage.app
+REACT_APP_FIREBASE_MESSAGING_SENDER_ID=<sender-id>
+REACT_APP_FIREBASE_APP_ID=<app-id>
+REACT_APP_FIREBASE_MEASUREMENT_ID=<measurement-id>
+REACT_APP_BACKEND_URL=http://127.0.0.1:8000
 ```
 
-Frontend environment variable:
-
-```powershell
-$env:REACT_APP_BACKEND_URL="http://127.0.0.1:8000"
-```
+Do not commit real `.env` files, Firebase service account JSON, R2 keys, or API keys.
 
 ## Start Locally
 
-Start MongoDB:
-
-```powershell
-docker run -d --name deplyzegpt-mongo -p 127.0.0.1:27017:27017 mongo:latest
-```
-
-Install and start the backend:
+Backend:
 
 ```powershell
 cd D:\code\vision-language\backend
-pip install -r requirements.txt
-$env:MONGO_URL="mongodb://127.0.0.1:27017"
-$env:DB_NAME="deplyzegpt"
-$env:CORS_ORIGINS="*"
-python -m uvicorn server:app --host 127.0.0.1 --port 8000
+C:\Python314\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8000
 ```
 
-Install and start the frontend:
+Frontend:
 
 ```powershell
 cd D:\code\vision-language\frontend
 npm install --legacy-peer-deps
-$env:REACT_APP_BACKEND_URL="http://127.0.0.1:8000"
-$env:PORT="3000"
 npm start
 ```
 
-Open:
+Open the frontend URL shown by CRA, usually:
 
 ```text
-http://127.0.0.1:3000
+http://localhost:3000
 ```
 
-## Test
+If CRA asks to use `3001`, accept it. The backend allows both `localhost` and `127.0.0.1` on ports `3000` and `3001`.
 
-Backend syntax check:
+## API Routes
+
+Existing route paths are kept stable:
+
+- `POST /api/upload`
+- `POST /api/analyze/image`
+- `POST /api/analyze/video`
+- `POST /api/analyze/video/gemini`
+- `GET /api/analyze/video/status/{job_id}`
+- `GET /api/files/{file_type}/{job_id}/{filename}`
+- `GET /api/files/presign/{job_id}`
+
+Session routes:
+
+- `POST /api/sessions`
+- `GET /api/sessions`
+- `PATCH /api/sessions/{session_id}`
+- `DELETE /api/sessions/{session_id}`
+- `GET /api/sessions/{session_id}/messages`
+
+All `/api/*` routes require a Firebase bearer token from the frontend.
+
+## Firestore Rules
+
+Rules live in `firestore.rules` and allow each authenticated user to read and write only their own job and session documents:
+
+```text
+jobs/{uid}/items/{jobId}
+sessions/{uid}/items/{sessionId}
+sessions/{uid}/items/{sessionId}/messages/{messageId}
+```
+
+Deploy rules with your Firebase workflow before testing a new project environment.
+
+## Validation
+
+Backend compile check:
 
 ```powershell
 cd D:\code\vision-language
-python -m py_compile backend\server.py backend\video_processor.py backend\yolo_service.py
+python -B -m py_compile backend\server.py backend\session_service.py backend\firestore_service.py backend\gemini_service.py
 ```
 
-Frontend production build:
+Frontend build:
 
 ```powershell
 cd D:\code\vision-language\frontend
 npm run build
 ```
 
-API health check:
+Manual smoke flow:
 
-```powershell
-Invoke-WebRequest http://127.0.0.1:8000/api/
-```
+1. Start backend and frontend.
+2. Sign in.
+3. Upload an image.
+4. Ask a Gemini question.
+5. Confirm a session appears in the sidebar.
+6. Refresh the browser.
+7. Confirm the active session and conversation restore.
+8. Upload a video and run Gemini or YOLO analysis.
 
-## Notes
+## Common Local Issues
 
-- Uploaded and processed files are stored under `/tmp/deplyzegpt`.
-- Video processing uses OpenCV frame annotation and FFmpeg H.264 re-encoding.
-- YOLO-Sem video processing is optimized for CPU by using lower inference size and capped output dimensions while keeping masks aligned frame-by-frame.
+- `No module named cv2`: use the Python environment that has `opencv-python` installed, or install `backend/requirements.txt`.
+- `WinError 10048`: port `8000` is already in use. Stop the existing backend process before starting another one.
+- `/api/sessions` returns `401`: expected when no Firebase bearer token is sent.
+- `/api/sessions` returns `404`: the backend process is stale or running from the wrong folder. Restart `uvicorn` from `backend/`.
+- Gemini says the model does not support thinking level: use `thinkingBudget` for `gemini-2.5-flash-lite`; this repo already uses `thinkingBudget=0`.
+
+## Production Notes
+
+- Keep all secrets out of git.
+- Store only R2 object paths in Firestore.
+- Generate presigned URLs on read with short expiry.
+- Delete session-owned R2 prefixes when deleting a session.
+- Add pagination before large session/message histories.
+- Add CI tests for auth, sessions, upload, and Gemini/YOLO route contracts before scaling usage.
