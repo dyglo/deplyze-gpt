@@ -18,8 +18,14 @@ MODEL_MAP = {
 def get_model(model_type: str) -> YOLO:
     if model_type not in _models:
         model_name = MODEL_MAP.get(model_type, 'yolo26n.pt')
+        model_path = Path(__file__).parent / model_name
+        if not model_path.exists():
+            raise FileNotFoundError(
+                f"Model file '{model_name}' not found. "
+                f"Available models: {list(MODEL_MAP.keys())[:2]}"
+            )
         logger.info(f"Loading YOLO model: {model_name}")
-        _models[model_type] = YOLO(model_name)
+        _models[model_type] = YOLO(str(model_path))
         logger.info(f"YOLO model {model_name} ready")
     return _models[model_type]
 

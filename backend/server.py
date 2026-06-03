@@ -218,10 +218,23 @@ async def _run_video_job(job_id: str, video_path: str, model_type: str, confiden
         )
 
 
+async def _prewarm_models():
+    """Load YOLO models into memory at startup to avoid first-request cold start."""
+    loop = asyncio.get_event_loop()
+    for model_type in ['yolo26', 'yolo26-seg']:
+        try:
+            from yolo_service import get_model
+            await loop.run_in_executor(executor, get_model, model_type)
+            logger.info(f"Pre-warmed YOLO model: {model_type}")
+        except Exception as e:
+            logger.warning(f"Pre-warm skipped for {model_type}: {e}")
+
+
 @app.on_event("startup")
 async def startup():
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    asyncio.create_task(_prewarm_models())
     logger.info("DeplyzeGPT API started")
 
 
