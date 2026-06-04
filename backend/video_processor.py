@@ -7,9 +7,11 @@ from pymongo import MongoClient
 
 logger = logging.getLogger(__name__)
 
-STANDARD_TARGET_FPS = 10.0
-SEMANTIC_MAX_OUTPUT_SIDE = 960
-SEMANTIC_IMGSZ = 512
+DETECTION_VIDEO_IMGSZ = 960
+INSTANCE_VIDEO_IMGSZ = 960
+FILTERED_VIDEO_CONFIDENCE = 0.18
+SEMANTIC_MAX_OUTPUT_SIDE = 1280
+SEMANTIC_IMGSZ = 768
 
 
 def _scaled_output_size(width: int, height: int, max_side: int) -> tuple:
@@ -23,12 +25,33 @@ def _scaled_output_size(width: int, height: int, max_side: int) -> tuple:
     return out_width, out_height
 
 
+def _video_predict_kwargs(model_type: str, confidence: float, class_filter_ids=None) -> dict:
+    predict_kwargs = {"verbose": False}
+    if model_type == 'yolo26-sem':
+        predict_kwargs["imgsz"] = SEMANTIC_IMGSZ
+    else:
+        predict_kwargs["conf"] = (
+            min(confidence, FILTERED_VIDEO_CONFIDENCE)
+            if class_filter_ids is not None else confidence
+        )
+        predict_kwargs["imgsz"] = INSTANCE_VIDEO_IMGSZ if model_type == 'yolo26-seg' else DETECTION_VIDEO_IMGSZ
+        if model_type == 'yolo26-seg':
+            predict_kwargs["retina_masks"] = True
+        if class_filter_ids is not None and len(class_filter_ids) > 1:
+            predict_kwargs["agnostic_nms"] = True
+
+    if class_filter_ids is not None:
+        predict_kwargs["classes"] = list(class_filter_ids)
+    return predict_kwargs
+
+
 def process_video_yolo(
     job_id: str,
     video_path: str,
     model_type: str,
     confidence: float,
     outputs_dir: Path,
+    class_filter_ids=None,
 ) -> str:
     """
     Process a video file with a YOLO model.
@@ -67,7 +90,6 @@ def process_video_yolo(
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 500
         is_semantic = model_type == 'yolo26-sem'
-        sample_every = 1 if is_semantic else max(1, round(fps / STANDARD_TARGET_FPS))
         out_width, out_height = (
             _scaled_output_size(width, height, SEMANTIC_MAX_OUTPUT_SIDE)
             if is_semantic else (width, height)
@@ -81,7 +103,7 @@ def process_video_yolo(
 
         update_progress(5)
         frame_num = 0
-        last_result = None
+        predict_kwargs = _video_predict_kwargs(model_type, confidence, class_filter_ids)
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -93,18 +115,12 @@ def process_video_yolo(
                 if (out_width, out_height) != (width, height) else frame
             )
 
-            if is_semantic or frame_num % sample_every == 0 or last_result is None:
-                predict_kwargs = {"verbose": False}
-                if is_semantic:
-                    predict_kwargs["imgsz"] = SEMANTIC_IMGSZ
-                else:
-                    predict_kwargs["conf"] = confidence
-                results = model.predict(output_frame, **predict_kwargs)
-                last_result = results[0]
-            if last_result is not None:
-                annotated = render_clean_annotations(last_result, output_frame)
-            else:
-                annotated = output_frame
+            results = model.predict(output_frame, **predict_kwargs)
+            result = results[0] if results else None
+            annotated = (
+                render_clean_annotations(result, output_frame, class_filter_ids=class_filter_ids)
+                if result is not None else output_frame
+            )
 
             out.write(annotated)
             frame_num += 1
