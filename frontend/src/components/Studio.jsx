@@ -400,9 +400,16 @@ export default function Studio({ user, onSignOut }) {
       source: fallbackUrl,
     });
 
+    // Only ever fetch the same-origin authenticated API. apiDownloadUrl returns
+    // an empty string when it cannot build one, which we treat as a hard error
+    // so the browser never issues a direct (CORS-blocked) R2 request.
+    if (!isApiUrl(url, API)) {
+      throw new Error("Download is not available for this result.");
+    }
+
     return {
       url,
-      headers: isApiUrl(url, API) ? await authHeaders() : {},
+      headers: await authHeaders(),
     };
   }, [authHeaders]);
 

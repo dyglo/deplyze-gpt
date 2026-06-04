@@ -69,7 +69,10 @@ export function jobIdFromOutputSource(source) {
 
 export function apiDownloadUrl({ apiBase, jobId, downloadUrl, source }) {
   if (downloadUrl) {
-    return absoluteDownloadUrl(downloadUrl, apiBase);
+    const absolute = absoluteDownloadUrl(downloadUrl, apiBase);
+    if (isApiUrl(absolute, apiBase)) {
+      return absolute;
+    }
   }
 
   if (jobId) {
@@ -86,7 +89,11 @@ export function apiDownloadUrl({ apiBase, jobId, downloadUrl, source }) {
     return `${apiBase.replace(/\/$/, "")}/files/download/${encodePathSegment(parsedJobId)}`;
   }
 
-  return source;
+  // Never fall back to a raw R2 / cross-origin URL: the browser must only ever
+  // fetch the same-origin authenticated API. If we cannot derive an API URL,
+  // return empty so the caller surfaces an inline download error instead of
+  // triggering a CORS-blocked direct R2 fetch.
+  return "";
 }
 
 export function isApiUrl(url, apiBase) {
