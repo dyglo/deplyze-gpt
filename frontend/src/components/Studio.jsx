@@ -79,6 +79,35 @@ function messageFromPersisted(message) {
   };
 }
 
+function downloadKeyFor(kind, jobId, source) {
+  return `${kind}:${jobId || source || "output"}`;
+}
+
+function filenameForBlob(kind, blob) {
+  if (kind === "video") return "deplyzegpt_output.mp4";
+  const extensionByType = {
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+  };
+  const extension = extensionByType[blob.type] || "jpg";
+  return `deplyzegpt_output.${extension}`;
+}
+
+function triggerLocalBlobDownload(blob, filename) {
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = Object.assign(document.createElement("a"), {
+    href: objectUrl,
+    download: filename,
+  });
+
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(objectUrl);
+}
+
 function greeting() {
   const h = new Date().getHours();
   if (h < 12) return "Good morning";
@@ -119,6 +148,7 @@ export default function Studio({ user, onSignOut }) {
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [view, setView] = useState("chat");
+  const [downloadStatus, setDownloadStatus] = useState({});
   const jobUnsubscribeRef = useRef(null);
   const isEmpty = messages.length === 0;
   const displayName = useMemo(() => user?.displayName || user?.email || "User", [user]);
@@ -367,67 +397,41 @@ export default function Studio({ user, onSignOut }) {
     return data.url;
   }, [authHeaders]);
 
-  const handleDownloadVideo = async (url, jobId) => {
-    let objectUrl = null;
-    const downloadUrl = await fetchFreshOutputUrl(jobId, url);
-    try {
-      const response = await fetch(downloadUrl);
-      if (!response.ok) throw new Error("Video download failed");
-      const blob = await response.blob();
-      objectUrl = URL.createObjectURL(blob);
-      const filename = "deplyzegpt_output.mp4";
-      const a = Object.assign(document.createElement("a"), {
-        href: objectUrl,
-        download: filename,
-      });
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } catch (_) {
-      const a = Object.assign(document.createElement("a"), {
-        href: downloadUrl,
-        download: "deplyzegpt_output.mp4",
-      });
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } finally {
-      if (objectUrl) {
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-      }
-    }
-  };
+  const handleBlobDownload = useCallback(async (kind, source, jobId, providedKey) => {
+    const key = providedKey || downloadKeyFor(kind, jobId, source);
+    setDownloadStatus(prev => ({ ...prev, [key]: { isLoading: true, error: "" } }));
 
-  const handleDownloadImage = async (content, jobId) => {
-    let objectUrl = null;
-    const downloadUrl = await fetchFreshOutputUrl(jobId, content);
     try {
-      const response = await fetch(downloadUrl);
-      if (!response.ok) throw new Error("Image download failed");
-      const blob = await response.blob();
-      objectUrl = URL.createObjectURL(blob);
-      const extension = blob.type.includes("png") ? "png" : "jpg";
-      const a = Object.assign(document.createElement("a"), {
-        href: objectUrl,
-        download: `deplyzegpt_output.${extension}`,
-      });
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } catch (_) {
-      const a = Object.assign(document.createElement("a"), {
-        href: downloadUrl,
-        download: "deplyzegpt_output.jpg",
-      });
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } finally {
-      if (objectUrl) {
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      const downloadUrl = await fetchFreshOutputUrl(jobId, source);
+      const response = await fetch(downloadUrl, { redirect: "follow" });
+      if (!response.ok) {
+        throw new Error(`Download failed with status ${response.status}`);
       }
+      const blob = await response.blob();
+      triggerLocalBlobDownload(blob, filenameForBlob(kind, blob));
+      setDownloadStatus(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    } catch {
+      setDownloadStatus(prev => ({
+        ...prev,
+        [key]: {
+          isLoading: false,
+          error: "Download failed. Please try again.",
+        },
+      }));
     }
-  };
+  }, [fetchFreshOutputUrl]);
+
+  const handleDownloadVideo = useCallback((url, jobId, key) => {
+    handleBlobDownload("video", url, jobId, key);
+  }, [handleBlobDownload]);
+
+  const handleDownloadImage = useCallback((content, jobId, key) => {
+    handleBlobDownload("image", content, jobId, key);
+  }, [handleBlobDownload]);
 
   const handleNewChat = useCallback(() => {
     setView("chat");
@@ -538,6 +542,7 @@ export default function Studio({ user, onSignOut }) {
               onSuggestionClick={handleSuggestionClick}
               onDownload={handleDownloadVideo}
               onDownloadImage={handleDownloadImage}
+              downloadStatus={downloadStatus}
             />
             <ChatInputBar
               prompt={inputPrompt}

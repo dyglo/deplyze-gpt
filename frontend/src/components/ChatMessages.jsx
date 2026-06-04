@@ -71,6 +71,10 @@ function SuggestionChips({ suggestions, onSuggestionClick }) {
   );
 }
 
+function downloadKeyFor(kind, jobId, source) {
+  return `${kind}:${jobId || source || "output"}`;
+}
+
 function Avatar() {
   return (
     <div className="w-7 h-7 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -127,7 +131,7 @@ function UserMessage({ message }) {
   );
 }
 
-function AssistantMessage({ message, onSuggestionClick, onDownload, onDownloadImage }) {
+function AssistantMessage({ message, onSuggestionClick, onDownload, onDownloadImage, downloadStatus }) {
   const { isLoading, result, error, model, videoJob } = message;
 
   if (isLoading && !videoJob) {
@@ -188,6 +192,8 @@ function AssistantMessage({ message, onSuggestionClick, onDownload, onDownloadIm
 
   if (result?.type === "image") {
     const counts = (result.detections || []).reduce((a, d) => { a[d.class] = (a[d.class] || 0) + 1; return a; }, {});
+    const downloadKey = downloadKeyFor("image", result.job_id, result.content);
+    const downloadState = downloadStatus?.[downloadKey] || {};
     return (
       <div data-testid="assistant-image-result" className="flex gap-3 mb-6">
         <Avatar />
@@ -204,14 +210,27 @@ function AssistantMessage({ message, onSuggestionClick, onDownload, onDownloadIm
             <button
               data-testid="download-image-button"
               type="button"
-              onClick={() => onDownloadImage(result.content, result.job_id)}
+              onClick={() => onDownloadImage(result.content, result.job_id, downloadKey)}
+              disabled={downloadState.isLoading}
+              aria-busy={downloadState.isLoading ? "true" : "false"}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors"
-              style={{ background: "var(--accent)", color: "#fff" }}
-              onMouseEnter={e => e.currentTarget.style.background = "var(--accent-hover)"}
-              onMouseLeave={e => e.currentTarget.style.background = "var(--accent)"}
+              style={{
+                background: downloadState.isLoading ? "var(--accent-hover)" : "var(--accent)",
+                color: "#fff",
+                cursor: downloadState.isLoading ? "progress" : "pointer",
+                opacity: downloadState.isLoading ? 0.85 : 1,
+              }}
+              onMouseEnter={e => { if (!downloadState.isLoading) e.currentTarget.style.background = "var(--accent-hover)"; }}
+              onMouseLeave={e => { if (!downloadState.isLoading) e.currentTarget.style.background = "var(--accent)"; }}
             >
-              <Download size={13} /> Download
+              {downloadState.isLoading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+              {downloadState.isLoading ? "Downloading..." : "Download"}
             </button>
+            {downloadState.error && (
+              <p data-testid="download-image-error" className="mt-1.5 text-[13px]" style={{ color: "#e06a5a" }}>
+                {downloadState.error}
+              </p>
+            )}
           </div>
           {result.detections?.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -244,6 +263,8 @@ function AssistantMessage({ message, onSuggestionClick, onDownload, onDownloadIm
   }
 
   if (result?.type === "video") {
+    const downloadKey = downloadKeyFor("video", result.job_id, result.content);
+    const downloadState = downloadStatus?.[downloadKey] || {};
     return (
       <div data-testid="assistant-video-result" className="flex gap-3 mb-6">
         <Avatar />
@@ -261,14 +282,27 @@ function AssistantMessage({ message, onSuggestionClick, onDownload, onDownloadIm
             <button
               data-testid="download-video-button"
               type="button"
-              onClick={() => onDownload(result.content, result.job_id)}
+              onClick={() => onDownload(result.content, result.job_id, downloadKey)}
+              disabled={downloadState.isLoading}
+              aria-busy={downloadState.isLoading ? "true" : "false"}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors"
-              style={{ background: "var(--accent)", color: "#fff" }}
-              onMouseEnter={e => e.currentTarget.style.background = "var(--accent-hover)"}
-              onMouseLeave={e => e.currentTarget.style.background = "var(--accent)"}
+              style={{
+                background: downloadState.isLoading ? "var(--accent-hover)" : "var(--accent)",
+                color: "#fff",
+                cursor: downloadState.isLoading ? "progress" : "pointer",
+                opacity: downloadState.isLoading ? 0.85 : 1,
+              }}
+              onMouseEnter={e => { if (!downloadState.isLoading) e.currentTarget.style.background = "var(--accent-hover)"; }}
+              onMouseLeave={e => { if (!downloadState.isLoading) e.currentTarget.style.background = "var(--accent)"; }}
             >
-              <Download size={13} /> Download
+              {downloadState.isLoading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+              {downloadState.isLoading ? "Downloading..." : "Download"}
             </button>
+            {downloadState.error && (
+              <p data-testid="download-video-error" className="mt-1.5 text-[13px]" style={{ color: "#e06a5a" }}>
+                {downloadState.error}
+              </p>
+            )}
           </div>
           <SuggestionChips suggestions={result.suggestions} onSuggestionClick={onSuggestionClick} />
         </div>
@@ -279,7 +313,7 @@ function AssistantMessage({ message, onSuggestionClick, onDownload, onDownloadIm
   return null;
 }
 
-export default function ChatMessages({ messages, onSuggestionClick, onDownload, onDownloadImage }) {
+export default function ChatMessages({ messages, onSuggestionClick, onDownload, onDownloadImage, downloadStatus }) {
   const endRef = useRef(null);
 
   useEffect(() => {
@@ -294,7 +328,16 @@ export default function ChatMessages({ messages, onSuggestionClick, onDownload, 
         {messages.map(msg =>
           msg.type === "user"
             ? <UserMessage key={msg.id} message={msg} />
-            : <AssistantMessage key={msg.id} message={msg} onSuggestionClick={onSuggestionClick} onDownload={onDownload} onDownloadImage={onDownloadImage} />
+            : (
+              <AssistantMessage
+                key={msg.id}
+                message={msg}
+                onSuggestionClick={onSuggestionClick}
+                onDownload={onDownload}
+                onDownloadImage={onDownloadImage}
+                downloadStatus={downloadStatus}
+              />
+            )
         )}
         <div ref={endRef} />
       </div>
