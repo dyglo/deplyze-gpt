@@ -210,7 +210,7 @@ function AssistantMessage({ message, onSuggestionClick, onDownload, onDownloadIm
             <button
               data-testid="download-image-button"
               type="button"
-              onClick={() => onDownloadImage(result.content, result.job_id, downloadKey)}
+              onClick={() => onDownloadImage(result.content, result.job_id, downloadKey, result.download_url)}
               disabled={downloadState.isLoading}
               aria-busy={downloadState.isLoading ? "true" : "false"}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors"
@@ -282,7 +282,7 @@ function AssistantMessage({ message, onSuggestionClick, onDownload, onDownloadIm
             <button
               data-testid="download-video-button"
               type="button"
-              onClick={() => onDownload(result.content, result.job_id, downloadKey)}
+              onClick={() => onDownload(result.content, result.job_id, downloadKey, result.download_url)}
               disabled={downloadState.isLoading}
               aria-busy={downloadState.isLoading ? "true" : "false"}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors"

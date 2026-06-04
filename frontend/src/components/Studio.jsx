@@ -7,6 +7,7 @@ import Sidebar from "./Sidebar";
 import ChatMessages from "./ChatMessages";
 import ChatInputBar from "./ChatInputBar";
 import DatasetPage from "../pages/DatasetPage";
+import { apiDownloadUrl, isApiUrl } from "../downloadUtils";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -70,6 +71,7 @@ function messageFromPersisted(message) {
     result: {
       type: resultType,
       content: resultType === "text" ? message.content : message.output_url,
+      download_url: message.output_download_url,
       job_id: message.job_id,
       detections: message.detections || [],
       suggestions: message.suggestions || [],
@@ -251,6 +253,7 @@ export default function Studio({ user, onSignOut }) {
             result: videoUrl ? {
               type: "video",
               content: videoUrl,
+              download_url: `${API}/files/download/${jobId}`,
               job_id: jobId,
               detections: [],
               suggestions: ["Analyze frames with Gemini", "Run segmentation", "Download result"],
@@ -389,17 +392,26 @@ export default function Studio({ user, onSignOut }) {
     setUploadError("");
   }, []);
 
-  const downloadRequest = useCallback(async (jobId, fallbackUrl) => ({
-    url: jobId ? `${API}/files/download/${jobId}` : fallbackUrl,
-    headers: jobId ? await authHeaders() : {},
-  }), [authHeaders]);
+  const downloadRequest = useCallback(async (jobId, fallbackUrl, downloadUrl) => {
+    const url = apiDownloadUrl({
+      apiBase: API,
+      jobId,
+      downloadUrl,
+      source: fallbackUrl,
+    });
 
-  const handleBlobDownload = useCallback(async (kind, source, jobId, providedKey) => {
+    return {
+      url,
+      headers: isApiUrl(url, API) ? await authHeaders() : {},
+    };
+  }, [authHeaders]);
+
+  const handleBlobDownload = useCallback(async (kind, source, jobId, providedKey, downloadUrl) => {
     const key = providedKey || downloadKeyFor(kind, jobId, source);
     setDownloadStatus(prev => ({ ...prev, [key]: { isLoading: true, error: "" } }));
 
     try {
-      const { url, headers } = await downloadRequest(jobId, source);
+      const { url, headers } = await downloadRequest(jobId, source, downloadUrl);
       const response = await fetch(url, { headers, redirect: "follow" });
       if (!response.ok) {
         throw new Error(`Download failed with status ${response.status}`);
@@ -422,12 +434,12 @@ export default function Studio({ user, onSignOut }) {
     }
   }, [downloadRequest]);
 
-  const handleDownloadVideo = useCallback((url, jobId, key) => {
-    handleBlobDownload("video", url, jobId, key);
+  const handleDownloadVideo = useCallback((url, jobId, key, downloadUrl) => {
+    handleBlobDownload("video", url, jobId, key, downloadUrl);
   }, [handleBlobDownload]);
 
-  const handleDownloadImage = useCallback((content, jobId, key) => {
-    handleBlobDownload("image", content, jobId, key);
+  const handleDownloadImage = useCallback((content, jobId, key, downloadUrl) => {
+    handleBlobDownload("image", content, jobId, key, downloadUrl);
   }, [handleBlobDownload]);
 
   const handleNewChat = useCallback(() => {

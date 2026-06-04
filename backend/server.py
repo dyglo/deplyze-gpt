@@ -9,6 +9,7 @@ import base64
 import logging
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 from pydantic import BaseModel
 from typing import Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
@@ -100,6 +101,19 @@ def _storage_key(uid: str, session_id: str, job_id: str, kind: str, filename: st
     return f"{kind}/{uid}/{session_id}/{job_id}/{filename}"
 
 
+def _download_url_for_output_key(key: str) -> Optional[str]:
+    parts = key.split("/")
+    if len(parts) != 5 or parts[0] != "outputs":
+        return None
+    _, _uid_value, session_id, job_id, filename = parts
+    return (
+        "/api/files/download/output/"
+        f"{quote(session_id, safe='')}/"
+        f"{quote(job_id, safe='')}/"
+        f"{quote(filename, safe='')}"
+    )
+
+
 def _job_id_from_file_url(file_url: str) -> Optional[str]:
     marker = "/api/files/uploads/"
     if marker not in file_url:
@@ -143,6 +157,7 @@ def _message_with_fresh_urls(message: dict) -> dict:
         data["input_url"] = presigned_get_url(data["input_r2_path"])
     if data.get("output_r2_path"):
         data["output_url"] = presigned_get_url(data["output_r2_path"])
+        data["output_download_url"] = _download_url_for_output_key(data["output_r2_path"])
     return data
 
 
@@ -158,6 +173,27 @@ def _stream_r2_body(body):
                 yield chunk
     finally:
         body.close()
+
+
+def _stream_output_key(key: str, log_context: str):
+    try:
+        obj = get_object(key)
+    except Exception as e:
+        logger.warning("R2 download failed for %s: %s", log_context, e)
+        raise HTTPException(404, "Output file not found")
+
+    body = obj["Body"]
+    headers = {
+        "Content-Disposition": f'attachment; filename="{_attachment_filename(key)}"',
+    }
+    if obj.get("ContentLength") is not None:
+        headers["Content-Length"] = str(obj["ContentLength"])
+
+    return StreamingResponse(
+        _stream_r2_body(body),
+        media_type=obj.get("ContentType") or "application/octet-stream",
+        headers=headers,
+    )
 
 
 def _download_job_input(uid: str, job_id: str, work_dir: Path) -> Tuple[Path, dict]:
@@ -353,24 +389,15 @@ async def download_output_file(request: Request, job_id: str):
     if not output_key:
         raise HTTPException(404, "Output file not ready")
 
-    try:
-        obj = get_object(output_key)
-    except Exception as e:
-        logger.warning("R2 download failed for job %s: %s", job_id, e)
-        raise HTTPException(404, "Output file not found")
+    return _stream_output_key(output_key, f"job {job_id}")
 
-    body = obj["Body"]
-    headers = {
-        "Content-Disposition": f'attachment; filename="{_attachment_filename(output_key)}"',
-    }
-    if obj.get("ContentLength") is not None:
-        headers["Content-Length"] = str(obj["ContentLength"])
 
-    return StreamingResponse(
-        _stream_r2_body(body),
-        media_type=obj.get("ContentType") or "application/octet-stream",
-        headers=headers,
-    )
+@api_router.get("/files/download/output/{session_id}/{job_id}/{filename}")
+async def download_output_file_by_path(request: Request, session_id: str, job_id: str, filename: str):
+    uid = _uid(request)
+    _require_session(uid, session_id)
+    output_key = _storage_key(uid, session_id, job_id, "outputs", _attachment_filename(filename))
+    return _stream_output_key(output_key, f"session {session_id} job {job_id}")
 
 
 @api_router.get("/files/{file_type}/{filename}")
@@ -500,6 +527,7 @@ async def analyze_image(request: Request, payload: ImageAnalysisRequest):
                 },
             )
             result["content"] = output_url
+            result["download_url"] = _download_url_for_output_key(output_key)
             result["job_id"] = job_id
             result["session_id"] = session_id
             return result
