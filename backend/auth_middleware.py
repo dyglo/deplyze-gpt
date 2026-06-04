@@ -61,7 +61,11 @@ class FirebaseAuthMiddleware(BaseHTTPMiddleware):
         initialize_firebase_admin()
 
     async def dispatch(self, request: Request, call_next):
-        if request.method == "OPTIONS" or not request.url.path.startswith("/api/"):
+        if (
+            request.method == "OPTIONS"
+            or request.url.path == "/api/healthz"
+            or not request.url.path.startswith("/api/")
+        ):
             return await call_next(request)
 
         authorization = request.headers.get("Authorization", "")

@@ -203,6 +203,11 @@ async def healthz():
     return {"status": "ok"}
 
 
+@api_router.get("/healthz")
+async def api_healthz():
+    return {"status": "ok"}
+
+
 @api_router.post("/sessions")
 async def create_session_route(request: Request, payload: SessionCreateRequest):
     uid = _uid(request)

@@ -300,7 +300,7 @@ jobs:
       - name: Smoke test Cloud Run health
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error "${{ steps.deploy.outputs.cloud_run_url }}/healthz"
+          curl --fail --silent --show-error "${{ steps.deploy.outputs.cloud_run_url }}/api/healthz"
 
   deploy-frontend:
     name: Deploy Frontend to Firebase Hosting
