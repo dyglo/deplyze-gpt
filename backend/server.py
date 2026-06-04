@@ -344,6 +344,37 @@ async def analyze_image(request: Request, payload: ImageAnalysisRequest):
         },
     )
 
+    class_filter_ids = None
+    if payload.model != "gemini":
+        from yolo_service import ClassFilterError, resolve_class_filter
+
+        try:
+            loop = asyncio.get_event_loop()
+            class_filter = await loop.run_in_executor(executor, resolve_class_filter, payload.prompt, payload.model)
+            class_filter_ids = class_filter.ids if class_filter else None
+        except ClassFilterError as e:
+            message = str(e)
+            update_job(uid, job_id, {"status": "failed", "progress": 100, "error": message[:500]})
+            add_message(
+                uid,
+                session_id,
+                {
+                    "role": "assistant",
+                    "content": message,
+                    "output_type": "error",
+                    "job_id": job_id,
+                    "model": payload.model,
+                },
+            )
+            raise HTTPException(422, message)
+        except FileNotFoundError as e:
+            update_job(uid, job_id, {"status": "failed", "error": str(e)[:500]})
+            raise HTTPException(404, str(e))
+        except Exception as e:
+            update_job(uid, job_id, {"status": "failed", "error": str(e)[:500]})
+            logger.error("Class filter resolution failed: %s", e, exc_info=True)
+            raise HTTPException(500, "Analysis failed. Please try again.")
+
     with tempfile.TemporaryDirectory(prefix="deplyzegpt-image-") as tmp:
         filepath, _job = _download_job_input(uid, job_id, Path(tmp))
         try:
@@ -370,7 +401,7 @@ async def analyze_image(request: Request, payload: ImageAnalysisRequest):
             from yolo_service import analyze_image_yolo
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
-                executor, analyze_image_yolo, str(filepath), payload.model, payload.confidence
+                executor, analyze_image_yolo, str(filepath), payload.model, payload.confidence, class_filter_ids
             )
             image_bytes, content_type = _decode_data_uri(result["content"])
             output_key = _storage_key(uid, session_id, job_id, "outputs", "output.jpg")
@@ -442,7 +473,7 @@ async def analyze_video(request: Request, payload: VideoAnalysisRequest, backgro
     if job.get("session_id") != session_id:
         update_job(uid, job_id, {"session_id": session_id})
 
-    from yolo_service import MODEL_MAP, ensure_model_available
+    from yolo_service import ClassFilterError, MODEL_MAP, ensure_model_available, resolve_class_filter
     if payload.model not in MODEL_MAP:
         raise HTTPException(422, f"Unsupported video model: {payload.model}")
     try:
@@ -452,6 +483,80 @@ async def analyze_video(request: Request, payload: VideoAnalysisRequest, backgro
             422,
             f"Model {payload.model} could not be downloaded for video processing. Try again later.",
         )
+
+    add_message(
+        uid,
+        session_id,
+        {
+            "role": "user",
+            "content": payload.prompt,
+            "input_filename": job.get("input_filename"),
+            "input_r2_path": job.get("input_key"),
+            "job_id": job_id,
+            "model": payload.model,
+        },
+    )
+
+    try:
+        class_filter = await asyncio.get_event_loop().run_in_executor(
+            executor, resolve_class_filter, payload.prompt, payload.model
+        )
+        class_filter_ids = class_filter.ids if class_filter else None
+    except ClassFilterError as e:
+        message = str(e)
+        update_job(
+            uid,
+            job_id,
+            {
+                "status": "failed",
+                "model": payload.model,
+                "type": "video",
+                "progress": 100,
+                "output_url": None,
+                "error": message[:500],
+                "session_id": session_id,
+            },
+        )
+        add_message(
+            uid,
+            session_id,
+            {
+                "role": "assistant",
+                "content": message,
+                "output_type": "error",
+                "job_id": job_id,
+                "model": payload.model,
+            },
+        )
+        raise HTTPException(422, message)
+    except Exception as e:
+        message = "Analysis failed. Please try again."
+        update_job(
+            uid,
+            job_id,
+            {
+                "status": "failed",
+                "model": payload.model,
+                "type": "video",
+                "progress": 100,
+                "output_url": None,
+                "error": str(e)[:500],
+                "session_id": session_id,
+            },
+        )
+        add_message(
+            uid,
+            session_id,
+            {
+                "role": "assistant",
+                "content": message,
+                "output_type": "error",
+                "job_id": job_id,
+                "model": payload.model,
+            },
+        )
+        logger.error("Video class filter resolution failed: %s", e, exc_info=True)
+        raise HTTPException(500, message)
 
     update_job(
         uid,
@@ -466,20 +571,8 @@ async def analyze_video(request: Request, payload: VideoAnalysisRequest, backgro
             "session_id": session_id,
         },
     )
-    add_message(
-        uid,
-        session_id,
-        {
-            "role": "user",
-            "content": payload.prompt,
-            "input_filename": job.get("input_filename"),
-            "input_r2_path": job.get("input_key"),
-            "job_id": job_id,
-            "model": payload.model,
-        },
-    )
 
-    background_tasks.add_task(_run_video_job, uid, session_id, job_id, payload.model, payload.confidence)
+    background_tasks.add_task(_run_video_job, uid, session_id, job_id, payload.model, payload.confidence, class_filter_ids)
     return {"job_id": job_id, "session_id": session_id}
 
 
@@ -549,7 +642,7 @@ async def analyze_video_gemini_route(request: Request, payload: VideoGeminiReque
             raise HTTPException(500, "Analysis failed. Please try again.")
 
 
-async def _run_video_job(uid: str, session_id: str, job_id: str, model_type: str, confidence: float):
+async def _run_video_job(uid: str, session_id: str, job_id: str, model_type: str, confidence: float, class_filter_ids=None):
     with tempfile.TemporaryDirectory(prefix="deplyzegpt-video-") as tmp:
         work_dir = Path(tmp)
         try:
@@ -577,6 +670,7 @@ async def _run_video_job(uid: str, session_id: str, job_id: str, model_type: str
                     model_type,
                     confidence,
                     output_dir,
+                    class_filter_ids,
                 ),
                 timeout=timeout_seconds,
             )
