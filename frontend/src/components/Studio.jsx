@@ -389,21 +389,18 @@ export default function Studio({ user, onSignOut }) {
     setUploadError("");
   }, []);
 
-  const fetchFreshOutputUrl = useCallback(async (jobId, fallbackUrl) => {
-    if (!jobId) return fallbackUrl;
-    const { data } = await axios.get(`${API}/files/presign/${jobId}`, {
-      headers: await authHeaders(),
-    });
-    return data.url;
-  }, [authHeaders]);
+  const downloadRequest = useCallback(async (jobId, fallbackUrl) => ({
+    url: jobId ? `${API}/files/download/${jobId}` : fallbackUrl,
+    headers: jobId ? await authHeaders() : {},
+  }), [authHeaders]);
 
   const handleBlobDownload = useCallback(async (kind, source, jobId, providedKey) => {
     const key = providedKey || downloadKeyFor(kind, jobId, source);
     setDownloadStatus(prev => ({ ...prev, [key]: { isLoading: true, error: "" } }));
 
     try {
-      const downloadUrl = await fetchFreshOutputUrl(jobId, source);
-      const response = await fetch(downloadUrl, { redirect: "follow" });
+      const { url, headers } = await downloadRequest(jobId, source);
+      const response = await fetch(url, { headers, redirect: "follow" });
       if (!response.ok) {
         throw new Error(`Download failed with status ${response.status}`);
       }
@@ -423,7 +420,7 @@ export default function Studio({ user, onSignOut }) {
         },
       }));
     }
-  }, [fetchFreshOutputUrl]);
+  }, [downloadRequest]);
 
   const handleDownloadVideo = useCallback((url, jobId, key) => {
     handleBlobDownload("video", url, jobId, key);

@@ -69,6 +69,10 @@ def download_file(key: str, path: Path) -> None:
     get_r2_client().download_file(bucket_name(), key, str(path))
 
 
+def get_object(key: str):
+    return get_r2_client().get_object(Bucket=bucket_name(), Key=key)
+
+
 def delete_object(key: str) -> None:
     get_r2_client().delete_object(Bucket=bucket_name(), Key=key)
 
