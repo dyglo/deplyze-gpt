@@ -1,0 +1,15 @@
+.env
+.env.*
+*.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+tests/
+*.log
+*firebase-adminsdk*.json
+credentials.json
+*credentials.json*
+gha-creds-*.json
+GCP_DEPLOYER_SERVICE_ACCOUNT_JSON
+*deployer-key*.json

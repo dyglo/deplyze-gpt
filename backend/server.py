@@ -39,6 +39,21 @@ executor = ThreadPoolExecutor(max_workers=2)
 app = FastAPI(title="DeplyzeGPT API")
 api_router = APIRouter(prefix="/api")
 
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "https://vision-sys.web.app",
+    "https://vision-sys.firebaseapp.com",
+]
+
+
+def _cors_origins() -> list[str]:
+    configured = os.environ.get("CORS_ORIGINS", "")
+    origins = [origin.strip() for origin in configured.split(",") if origin.strip()]
+    return origins or DEFAULT_CORS_ORIGINS
+
 
 class ImageAnalysisRequest(BaseModel):
     file_url: str
@@ -181,6 +196,11 @@ def _build_progress_mongo_client(uid: str, job_id: str):
 @api_router.get("/")
 async def root():
     return {"message": "DeplyzeGPT API", "status": "ok"}
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
 
 
 @api_router.post("/sessions")
@@ -735,15 +755,12 @@ app.include_router(api_router)
 
 app.add_middleware(FirebaseAuthMiddleware)
 
+cors_origins = _cors_origins()
+
 app = CORSMiddleware(
     app=app,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-    ],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials="*" not in cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

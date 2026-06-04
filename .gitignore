@@ -61,6 +61,11 @@ chainlit.md
 
 # Deployment
 .vercel
+.firebase/
+gha-creds-*.json
+GCP_DEPLOYER_SERVICE_ACCOUNT_JSON
+deplyzegpt-deployer-key.json
+*deployer-key*.json
 
 # Data and databases
 agenthub/agents/youtube/db
