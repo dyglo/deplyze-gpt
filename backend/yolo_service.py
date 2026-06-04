@@ -20,14 +20,18 @@ MODEL_MAP = {
 }
 
 ANNOTATION_PALETTE = [
-    (70, 156, 255),
-    (92, 213, 160),
-    (255, 178, 83),
-    (238, 130, 238),
-    (86, 205, 230),
-    (144, 132, 255),
-    (116, 196, 118),
-    (250, 125, 129),
+    (50, 170, 255),
+    (74, 222, 128),
+    (255, 205, 86),
+    (244, 114, 182),
+    (45, 212, 191),
+    (168, 139, 250),
+    (96, 165, 250),
+    (251, 146, 60),
+    (248, 113, 113),
+    (34, 197, 94),
+    (250, 204, 21),
+    (56, 189, 248),
 ]
 SEMANTIC_FILL_ALPHA = 0.62
 SEMANTIC_BOUNDARY_ALPHA = 0.72
@@ -420,9 +424,14 @@ def resolve_class_filter(prompt: str, model_type: str):
     return ClassFilter(ids=ids, names=selected_names)
 
 
-def _annotation_color(cls_id: int) -> tuple:
-    color = ANNOTATION_PALETTE[cls_id % len(ANNOTATION_PALETTE)]
+def _annotation_color(cls_id: int, instance_index=None) -> tuple:
+    offset = 0 if instance_index is None else (instance_index * 5)
+    color = ANNOTATION_PALETTE[(cls_id + offset) % len(ANNOTATION_PALETTE)]
     return int(color[0]), int(color[1]), int(color[2])
+
+
+def _annotation_box_thickness(width: int, height: int) -> int:
+    return max(3, min(7, round(min(width, height) / 220)))
 
 
 def _apply_masks(image, result):
@@ -438,7 +447,7 @@ def _apply_masks(image, result):
 
     for index, mask in enumerate(mask_data):
         cls_id = classes[index] if index < len(classes) else index
-        color = np.array(_annotation_color(cls_id), dtype=np.float32)
+        color = np.array(_annotation_color(cls_id, index), dtype=np.float32)
         resized = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
         mask_area = resized > 0.5
         image[mask_area] = (
@@ -452,7 +461,14 @@ def _apply_masks(image, result):
         )
         if contours:
             boundary_layer = image.copy()
-            cv2.drawContours(boundary_layer, contours, -1, tuple(int(c) for c in color), 2, cv2.LINE_AA)
+            cv2.drawContours(
+                boundary_layer,
+                contours,
+                -1,
+                tuple(int(c) for c in color),
+                max(2, _annotation_box_thickness(width, height) - 1),
+                cv2.LINE_AA,
+            )
             cv2.addWeighted(boundary_layer, INSTANCE_BOUNDARY_ALPHA, image, 1.0 - INSTANCE_BOUNDARY_ALPHA, 0, image)
 
     return image
@@ -575,9 +591,9 @@ def render_clean_annotations(result, base_image=None, class_filter_ids=None):
         return image
 
     height, width = image.shape[:2]
-    box_thickness = max(1, min(2, round(min(width, height) / 480)))
+    box_thickness = _annotation_box_thickness(width, height)
     font_scale = max(0.42, min(0.68, width / 1800))
-    font_thickness = 1
+    font_thickness = max(1, min(2, round(min(width, height) / 480)))
     pad_x = 6
     pad_y = 4
 
@@ -587,7 +603,7 @@ def render_clean_annotations(result, base_image=None, class_filter_ids=None):
         x1, y1, x2, y2 = [int(round(v)) for v in boxes.xyxy[i].tolist()]
         class_name = result.names.get(cls_id, f"class_{cls_id}")
         label = f"{class_name} {conf:.2f}"
-        color = _annotation_color(cls_id)
+        color = _annotation_color(cls_id, i)
 
         cv2.rectangle(image, (x1, y1), (x2, y2), color, box_thickness, cv2.LINE_AA)
 

@@ -111,6 +111,32 @@ def test_analyze_image_yolo_passes_classes_only_when_filtered(monkeypatch):
     assert "classes" not in calls[-1][1]
 
 
+def test_render_clean_annotations_uses_thicker_per_instance_boxes():
+    class Boxes:
+        cls = np.array([2, 2])
+        conf = np.array([0.91, 0.88])
+        xyxy = np.array([[10, 20, 60, 80], [90, 20, 140, 80]], dtype=float)
+
+        def __len__(self):
+            return len(self.cls)
+
+    base_image = np.zeros((120, 160, 3), dtype=np.uint8)
+    result = SimpleNamespace(
+        names=COCO_NAMES,
+        orig_img=base_image,
+        boxes=Boxes(),
+        masks=None,
+        semantic_mask=None,
+    )
+
+    rendered = yolo_service.render_clean_annotations(result, base_image)
+
+    assert yolo_service._annotation_box_thickness(160, 120) >= 3
+    assert not np.array_equal(rendered[20, 10], base_image[20, 10])
+    assert not np.array_equal(rendered[20, 90], base_image[20, 90])
+    assert not np.array_equal(rendered[20, 10], rendered[20, 90])
+
+
 class ArrayLike:
     def __init__(self, value):
         self.value = value
