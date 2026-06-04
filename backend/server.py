@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 import os
@@ -19,7 +19,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 from auth_middleware import FirebaseAuthMiddleware
 from firestore_service import create_job, get_job, update_job, update_job_sync
-from r2_service import upload_bytes, upload_file, upload_fileobj, download_file, presigned_get_url
+from r2_service import upload_bytes, upload_file, upload_fileobj, download_file, get_object, presigned_get_url
 from session_service import (
     add_message,
     delete_session,
@@ -144,6 +144,20 @@ def _message_with_fresh_urls(message: dict) -> dict:
     if data.get("output_r2_path"):
         data["output_url"] = presigned_get_url(data["output_r2_path"])
     return data
+
+
+def _attachment_filename(key: str) -> str:
+    filename = Path(key).name or "deplyzegpt_output"
+    return "".join(ch for ch in filename if ch.isalnum() or ch in "._-") or "deplyzegpt_output"
+
+
+def _stream_r2_body(body):
+    try:
+        for chunk in body.iter_chunks(chunk_size=1024 * 1024):
+            if chunk:
+                yield chunk
+    finally:
+        body.close()
 
 
 def _download_job_input(uid: str, job_id: str, work_dir: Path) -> Tuple[Path, dict]:
@@ -329,6 +343,34 @@ async def presign_output_file(request: Request, job_id: str):
     if not output_key:
         raise HTTPException(404, "Output file not ready")
     return {"url": presigned_get_url(output_key), "expires_in": 3600}
+
+
+@api_router.get("/files/download/{job_id}")
+async def download_output_file(request: Request, job_id: str):
+    uid = _uid(request)
+    job = _require_job(uid, job_id)
+    output_key = job.get("output_key")
+    if not output_key:
+        raise HTTPException(404, "Output file not ready")
+
+    try:
+        obj = get_object(output_key)
+    except Exception as e:
+        logger.warning("R2 download failed for job %s: %s", job_id, e)
+        raise HTTPException(404, "Output file not found")
+
+    body = obj["Body"]
+    headers = {
+        "Content-Disposition": f'attachment; filename="{_attachment_filename(output_key)}"',
+    }
+    if obj.get("ContentLength") is not None:
+        headers["Content-Length"] = str(obj["ContentLength"])
+
+    return StreamingResponse(
+        _stream_r2_body(body),
+        media_type=obj.get("ContentType") or "application/octet-stream",
+        headers=headers,
+    )
 
 
 @api_router.get("/files/{file_type}/{filename}")
