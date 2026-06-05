@@ -135,8 +135,10 @@ jobs:
           R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          VERTEX_AI_PROJECT: vision-sys
+          VERTEX_AI_LOCATION: global
+          VERTEX_GCS_BUCKET: vision-sys.firebasestorage.app
+          GEMINI_MODEL: gemini-3-flash-preview
         run: |
           set -euo pipefail
 
@@ -157,7 +159,9 @@ jobs:
             R2_ENDPOINT_URL \
             R2_ACCESS_KEY_ID \
             R2_SECRET_ACCESS_KEY \
-            GEMINI_API_KEY \
+            VERTEX_AI_PROJECT \
+            VERTEX_AI_LOCATION \
+            VERTEX_GCS_BUCKET \
             GEMINI_MODEL
           do
             if [ -z "${!name:-}" ]; then
@@ -215,8 +219,10 @@ jobs:
           R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          VERTEX_AI_PROJECT: vision-sys
+          VERTEX_AI_LOCATION: global
+          VERTEX_GCS_BUCKET: vision-sys.firebasestorage.app
+          GEMINI_MODEL: gemini-3-flash-preview
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -233,10 +239,13 @@ jobs:
               "R2_ENDPOINT_URL": os.environ["R2_ENDPOINT_URL"],
               "R2_ACCESS_KEY_ID": os.environ["R2_ACCESS_KEY_ID"],
               "R2_SECRET_ACCESS_KEY": os.environ["R2_SECRET_ACCESS_KEY"],
-              "GEMINI_API_KEY": os.environ["GEMINI_API_KEY"],
+              "VERTEX_AI_PROJECT": os.environ["VERTEX_AI_PROJECT"],
+              "VERTEX_AI_LOCATION": os.environ["VERTEX_AI_LOCATION"],
+              "VERTEX_GCS_BUCKET": os.environ["VERTEX_GCS_BUCKET"],
               "GEMINI_MODEL": os.environ["GEMINI_MODEL"],
               "FIREBASE_PROJECT_ID": "vision-sys",
               "GOOGLE_CLOUD_PROJECT": "vision-sys",
+              "GOOGLE_CLOUD_LOCATION": os.environ["VERTEX_AI_LOCATION"],
               "GCLOUD_PROJECT": "vision-sys",
               "CORS_ORIGINS": "https://vision-sys.web.app,https://vision-sys.firebaseapp.com,https://deplyzegpt.xyz",
           }

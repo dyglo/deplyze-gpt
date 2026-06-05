@@ -55,6 +55,27 @@ def initialize_firebase_admin():
     return firebase_admin.initialize_app(cred)
 
 
+def _provider_ids(user_record) -> set[str]:
+    return {
+        getattr(provider, "provider_id", "")
+        for provider in getattr(user_record, "provider_data", []) or []
+        if getattr(provider, "provider_id", "")
+    }
+
+
+def _is_google_user(decoded: dict, user_record) -> bool:
+    firebase_claims = decoded.get("firebase", {}) or {}
+    if firebase_claims.get("sign_in_provider") == "google.com":
+        return True
+    return "google.com" in _provider_ids(user_record)
+
+
+def _is_verified_for_app(decoded: dict, user_record) -> bool:
+    if _is_google_user(decoded, user_record):
+        return True
+    return bool(getattr(user_record, "email_verified", False))
+
+
 class FirebaseAuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
@@ -78,6 +99,15 @@ class FirebaseAuthMiddleware(BaseHTTPMiddleware):
         except Exception:
             return JSONResponse({"detail": "Invalid authentication token"}, status_code=401)
 
+        try:
+            user_record = auth.get_user(decoded["uid"])
+        except Exception:
+            return JSONResponse({"detail": "Invalid authentication token"}, status_code=401)
+
+        if not _is_verified_for_app(decoded, user_record):
+            return JSONResponse({"detail": "Email verification required"}, status_code=403)
+
         request.state.uid = decoded["uid"]
         request.state.firebase_user = decoded
+        request.state.firebase_user_record = user_record
         return await call_next(request)
