@@ -47,6 +47,7 @@ DEFAULT_CORS_ORIGINS = [
     "http://127.0.0.1:3001",
     "https://vision-sys.web.app",
     "https://vision-sys.firebaseapp.com",
+    "https://deplyzegpt.xyz",
 ]
 
 
