@@ -136,7 +136,7 @@ function Greeting({ name }) {
   );
 }
 
-export default function Studio({ user, onSignOut }) {
+export default function Studio({ user, onSignOut, onProfileUpdate, profileVersion = 0 }) {
   const [messages, setMessages]         = useState([]);
   const [selectedModel, setSelectedModel] = useState("gemini");
   const [inputPrompt, setInputPrompt]   = useState("");
@@ -153,7 +153,10 @@ export default function Studio({ user, onSignOut }) {
   const [downloadStatus, setDownloadStatus] = useState({});
   const jobUnsubscribeRef = useRef(null);
   const isEmpty = messages.length === 0;
-  const displayName = useMemo(() => user?.displayName || user?.email || "User", [user]);
+  // profileVersion is included so the greeting refreshes after a profile edit
+  // (updateProfile mutates the same user object in place).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const displayName = useMemo(() => user?.displayName || user?.email || "User", [user, profileVersion]);
   const firstName = useMemo(() => displayName.split("@")[0].split(" ")[0] || "there", [displayName]);
   const storageKey = useMemo(() => `deplyzegpt.activeSession.${user.uid}`, [user.uid]);
 
@@ -477,18 +480,34 @@ export default function Studio({ user, onSignOut }) {
   const handleRenameSession = useCallback(async (sessionId, name) => {
     const cleanName = name.trim();
     if (!sessionId || !cleanName) return;
-    await axios.patch(`${API}/sessions/${sessionId}`, { name: cleanName }, {
-      headers: await authHeaders(),
-    });
-    await loadSessions();
+    // Optimistic update so the UI reflects the new name immediately.
+    setSessions((current) =>
+      current.map((s) => (s.session_id === sessionId ? { ...s, name: cleanName } : s))
+    );
+    try {
+      await axios.patch(`${API}/sessions/${sessionId}`, { name: cleanName }, {
+        headers: await authHeaders(),
+      });
+    } catch (err) {
+      // Roll back to the server's truth if the save failed.
+      await loadSessions().catch(() => {});
+    }
   }, [authHeaders, loadSessions]);
 
   const handleTogglePinSession = useCallback(async (session) => {
     if (!session?.session_id) return;
-    await axios.patch(`${API}/sessions/${session.session_id}`, { pinned: !session.pinned }, {
-      headers: await authHeaders(),
-    });
-    await loadSessions();
+    const nextPinned = !session.pinned;
+    setSessions((current) =>
+      current.map((s) => (s.session_id === session.session_id ? { ...s, pinned: nextPinned } : s))
+    );
+    try {
+      await axios.patch(`${API}/sessions/${session.session_id}`, { pinned: nextPinned }, {
+        headers: await authHeaders(),
+      });
+      await loadSessions();
+    } catch (err) {
+      await loadSessions().catch(() => {});
+    }
   }, [authHeaders, loadSessions]);
 
   const handleDeleteSession = useCallback(async (sessionId) => {
@@ -512,6 +531,8 @@ export default function Studio({ user, onSignOut }) {
         onNewChat={handleNewChat}
         user={user}
         onSignOut={onSignOut}
+        onProfileUpdate={onProfileUpdate}
+        profileVersion={profileVersion}
         sessions={sessions}
         activeSessionId={activeSessionId}
         isLoadingSessions={isLoadingSession}

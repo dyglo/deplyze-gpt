@@ -235,6 +235,8 @@ export default function Sidebar({
   onDeleteSession,
   activeView = "chat",
   onSelectView,
+  onProfileUpdate,
+  profileVersion = 0,
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -261,9 +263,10 @@ export default function Sidebar({
     setRenamingSessionId(sessionId);
   };
 
-  const renameSave = async (sessionId, name) => {
-    await onRenameSession?.(sessionId, name);
+  const renameSave = (sessionId, name) => {
+    // Close the editor immediately; the save runs optimistically in the background.
     setRenamingSessionId(null);
+    Promise.resolve(onRenameSession?.(sessionId, name)).catch(() => {});
   };
 
   const deleteStart = (sessionId) => {
@@ -467,12 +470,21 @@ export default function Sidebar({
             onMouseLeave={(e) => { if (!accountMenuOpen) e.currentTarget.style.background = "transparent"; }}
             title={displayName}
           >
-            <span
-              className="flex h-9 w-9 flex-none items-center justify-center rounded-full text-sm font-semibold"
-              style={{ background: "var(--bg-elevated)", color: "var(--text-primary)" }}
-            >
-              {initialsFromUser(user)}
-            </span>
+            {user?.photoURL ? (
+              <img
+                src={user.photoURL}
+                alt={displayName}
+                className="h-9 w-9 flex-none rounded-full object-cover"
+                style={{ border: "1px solid var(--border-subtle)" }}
+              />
+            ) : (
+              <span
+                className="flex h-9 w-9 flex-none items-center justify-center rounded-full text-sm font-semibold"
+                style={{ background: "var(--bg-elevated)", color: "var(--text-primary)" }}
+              >
+                {initialsFromUser(user)}
+              </span>
+            )}
             {!collapsed && (
               <>
                 <span className="min-w-0 flex-1">
@@ -491,6 +503,8 @@ export default function Sidebar({
         onClose={() => setSettingsOpen(false)}
         user={user}
         onSignOut={onSignOut}
+        onProfileUpdate={onProfileUpdate}
+        profileVersion={profileVersion}
       />
     </>
   );

@@ -22,6 +22,9 @@ function LoadingScreen() {
 function AppRoutes() {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
+  // Bumped after a profile edit to force a re-render with the updated
+  // displayName/photoURL (updateProfile does not fire onAuthStateChanged).
+  const [profileVersion, setProfileVersion] = useState(0);
 
   useEffect(() => {
     initializeAnalytics().catch(() => null);
@@ -38,6 +41,10 @@ function AppRoutes() {
     await signOut(auth);
   };
 
+  // updateProfile() mutates auth.currentUser in place without firing
+  // onAuthStateChanged, so bump a version to re-render with the new values.
+  const handleProfileUpdate = () => setProfileVersion((v) => v + 1);
+
   if (!authReady) return <LoadingScreen />;
 
   return (
@@ -47,7 +54,12 @@ function AppRoutes() {
         path="/"
         element={
           user ? (
-            <Studio user={user} onSignOut={handleSignOut} />
+            <Studio
+              user={user}
+              onSignOut={handleSignOut}
+              onProfileUpdate={handleProfileUpdate}
+              profileVersion={profileVersion}
+            />
           ) : (
             <Navigate to="/auth" replace />
           )
