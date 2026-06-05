@@ -14,7 +14,7 @@ import {
   Check,
 } from "lucide-react";
 import { updateProfile } from "firebase/auth";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { auth, db, storage } from "../firebase";
 import { useTheme } from "../theme";
@@ -28,6 +28,24 @@ import { useTheme } from "../theme";
 const NAV = [
   { id: "general", label: "General", icon: SettingsIcon },
   { id: "account", label: "Account", icon: UserRound },
+];
+
+// Computer-vision focused roles for "What best describes your work?".
+// Collected for analytics/profile only — not wired to any app behavior.
+const WORK_ROLES = [
+  { id: "cv_engineer", label: "Computer Vision Engineer" },
+  { id: "ml_engineer", label: "Machine Learning Engineer" },
+  { id: "ai_researcher", label: "AI / ML Researcher" },
+  { id: "data_scientist", label: "Data Scientist" },
+  { id: "mlops_engineer", label: "MLOps / ML Infrastructure Engineer" },
+  { id: "robotics_engineer", label: "Robotics / Perception Engineer" },
+  { id: "software_engineer", label: "Software Engineer" },
+  { id: "product_manager", label: "Product Manager" },
+  { id: "founder", label: "Founder / Entrepreneur" },
+  { id: "student", label: "Student / Researcher in training" },
+  { id: "educator", label: "Educator / Professor" },
+  { id: "hobbyist", label: "Hobbyist / Enthusiast" },
+  { id: "other", label: "Other" },
 ];
 
 const THEMES = {
@@ -104,7 +122,11 @@ function GeneralPanel({ c, user, themePref, onThemeChange, onProfileUpdate }) {
   const [savingName, setSavingName] = useState(false);
   const [nameSaved, setNameSaved] = useState(false);
   const [error, setError] = useState("");
+  const [workRole, setWorkRole] = useState("");
+  const [roleOpen, setRoleOpen] = useState(false);
+  const [roleSaving, setRoleSaving] = useState(false);
   const fileInputRef = useRef(null);
+  const roleRef = useRef(null);
   const saveTimer = useRef(null);
   const savedTimer = useRef(null);
 
@@ -118,6 +140,50 @@ function GeneralPanel({ c, user, themePref, onThemeChange, onProfileUpdate }) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     if (savedTimer.current) clearTimeout(savedTimer.current);
   }, []);
+
+  // Load the previously saved work role from Firestore.
+  useEffect(() => {
+    let cancelled = false;
+    if (!auth.currentUser) return undefined;
+    getDoc(doc(db, "users", auth.currentUser.uid))
+      .then((snap) => {
+        if (!cancelled && snap.exists() && snap.data().workRole) {
+          setWorkRole(snap.data().workRole);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Close the role dropdown when clicking outside it.
+  useEffect(() => {
+    if (!roleOpen) return undefined;
+    const onClick = (e) => { if (roleRef.current && !roleRef.current.contains(e.target)) setRoleOpen(false); };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [roleOpen]);
+
+  // Persist the selected work role to Firestore (collected for profile only).
+  const handleRoleSelect = (roleId) => {
+    setRoleOpen(false);
+    if (!auth.currentUser || roleId === workRole) return;
+    const previous = workRole;
+    setWorkRole(roleId);
+    setError("");
+    setRoleSaving(true);
+    setDoc(
+      doc(db, "users", auth.currentUser.uid),
+      { workRole: roleId, email: auth.currentUser.email || null, updatedAt: serverTimestamp() },
+      { merge: true }
+    )
+      .catch(() => {
+        setWorkRole(previous);
+        setError("Couldn't save your selection. Try again.");
+      })
+      .finally(() => setRoleSaving(false));
+  };
+
+  const selectedRole = WORK_ROLES.find((r) => r.id === workRole);
 
   // Debounced auto-save of the display name to Firebase Auth + Firestore.
   const handleNameChange = (value) => {
@@ -245,14 +311,45 @@ function GeneralPanel({ c, user, themePref, onThemeChange, onProfileUpdate }) {
         </Field>
 
         <Field c={c} label="What best describes your work?">
-          <button
-            type="button"
-            className="flex h-10 w-[220px] items-center justify-between rounded-lg px-3.5 text-sm transition"
-            style={{ background: c.fieldBg, border: `1px solid ${c.borderInput}`, color: c.textMuted }}
-          >
-            Select
-            <ChevronDown size={16} style={{ color: c.textFaint }} />
-          </button>
+          <div ref={roleRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setRoleOpen((v) => !v)}
+              className="flex h-10 w-[260px] items-center justify-between gap-2 rounded-lg px-3.5 text-sm transition"
+              style={{ background: c.fieldBg, border: `1px solid ${roleOpen ? c.accent : c.borderInput}`, color: selectedRole ? c.text : c.textMuted }}
+            >
+              <span className="truncate">{selectedRole ? selectedRole.label : "Select"}</span>
+              <span className="flex flex-none items-center gap-1.5">
+                {roleSaving && <Loader2 size={14} className="animate-spin" style={{ color: c.textFaint }} />}
+                <ChevronDown size={16} style={{ color: c.textFaint }} />
+              </span>
+            </button>
+
+            {roleOpen && (
+              <div
+                className="absolute right-0 z-30 mt-1.5 max-h-64 w-[260px] overflow-y-auto rounded-xl p-1.5 shadow-xl"
+                style={{ background: c.modalBg, border: `1px solid ${c.border}` }}
+              >
+                {WORK_ROLES.map((role) => {
+                  const isActive = role.id === workRole;
+                  return (
+                    <button
+                      key={role.id}
+                      type="button"
+                      onClick={() => handleRoleSelect(role.id)}
+                      className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition"
+                      style={{ background: isActive ? c.active : "transparent", color: c.text }}
+                      onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = c.hover; }}
+                      onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
+                    >
+                      <span className="truncate">{role.label}</span>
+                      {isActive && <Check size={15} style={{ color: c.accent }} />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </Field>
       </div>
 
