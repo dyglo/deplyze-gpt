@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { onAuthStateChanged, sendEmailVerification, signOut } from "firebase/auth";
-import { Loader2, LogOut, MailCheck, RefreshCw, Send } from "lucide-react";
+import { BrowserRouter, Link, Navigate, Route, Routes, useSearchParams } from "react-router-dom";
+import { applyActionCode, onAuthStateChanged, sendEmailVerification, signOut } from "firebase/auth";
+import { CheckCircle2, Loader2, LogOut, MailCheck, RefreshCw, Send } from "lucide-react";
 import Studio from "./components/Studio";
 import AuthPage from "./pages/AuthPage";
 import { ThemeProvider } from "./theme";
@@ -46,6 +46,9 @@ function VerificationScreen({ user, onRefresh, onResend, onSignOut, loadingActio
             Check your inbox for the verification link sent to{" "}
             <span className="font-medium text-neutral-800">{user?.email}</span>. After verifying, refresh your session to continue.
           </p>
+          <p className="mt-3 rounded-lg border border-orange-100 bg-orange-50 px-3.5 py-2 text-sm leading-relaxed text-orange-800">
+            The email may arrive in your spam or junk folder — please check there if you don't see it within a minute.
+          </p>
 
           {message && (
             <p className="mt-5 rounded-lg border border-emerald-100 bg-emerald-50 px-3.5 py-2 text-sm text-emerald-700">
@@ -89,6 +92,68 @@ function VerificationScreen({ user, onRefresh, onResend, onSignOut, loadingActio
             <LogOut size={16} />
             Sign out
           </button>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function VerifiedPage() {
+  const [searchParams] = useSearchParams();
+  const [status, setStatus] = useState("checking");
+
+  useEffect(() => {
+    const mode = searchParams.get("mode");
+    const oobCode = searchParams.get("oobCode");
+
+    if (mode !== "verifyEmail" || !oobCode) {
+      setStatus("ready");
+      return;
+    }
+
+    applyActionCode(auth, oobCode)
+      .then(async () => {
+        if (auth.currentUser) {
+          await auth.currentUser.reload();
+          await auth.currentUser.getIdToken(true);
+        }
+        setStatus("verified");
+      })
+      .catch(() => setStatus("error"));
+  }, [searchParams]);
+
+  const isChecking = status === "checking";
+  const hasError = status === "error";
+
+  return (
+    <main className="min-h-screen w-full bg-[#111111] text-[#F5F4EF]">
+      <section className="flex min-h-screen items-center justify-center px-5 py-10 sm:px-12">
+        <div className="w-full max-w-md">
+          <div className="mb-10">
+            <span className="text-lg font-semibold tracking-tight">DeplyzeGPT</span>
+          </div>
+
+          <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-lg bg-[#C96A2A]/15 text-[#C96A2A]">
+            {isChecking ? <Loader2 size={24} className="animate-spin" /> : <CheckCircle2 size={24} aria-hidden="true" />}
+          </div>
+
+          <h1 className="text-3xl font-semibold tracking-tight">
+            {hasError ? "Verification link needs attention" : "Your email has been verified"}
+          </h1>
+          <p className="mt-3 text-sm leading-relaxed text-[#A1A1AA]">
+            {isChecking
+              ? "Confirming your verification link..."
+              : hasError
+                ? "This verification link may have expired or already been used. Sign in and resend the verification email if needed."
+                : "You can now sign in to DeplyzeGPT."}
+          </p>
+
+          <Link
+            to="/auth"
+            className="mt-7 inline-flex h-10 items-center justify-center rounded-lg bg-[#C96A2A] px-5 text-sm font-semibold text-white transition hover:bg-[#B65E24]"
+          >
+            Sign In
+          </Link>
         </div>
       </section>
     </main>
@@ -178,6 +243,7 @@ function AppRoutes() {
 
   return (
     <Routes>
+      <Route path="/verified" element={<VerifiedPage />} />
       <Route
         path="/auth"
         element={user ? (userNeedsVerification ? verificationScreen : <Navigate to="/" replace />) : <AuthPage />}

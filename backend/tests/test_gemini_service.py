@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -42,7 +43,7 @@ def test_generate_with_retry_exhausts_quota_errors(monkeypatch):
     assert sleeps == [2, 4, 8]
 
 
-def test_generate_with_retry_sanitizes_non_quota_errors():
+def test_generate_with_retry_sanitizes_non_quota_errors(capsys):
     def operation():
         raise RuntimeError("provider secret stack trace")
 
@@ -51,6 +52,18 @@ def test_generate_with_retry_sanitizes_non_quota_errors():
 
     assert str(error.value) == gemini_service.GENERIC_GEMINI_MESSAGE
     assert "provider secret" not in str(error.value)
+
+    structured_log = json.loads(capsys.readouterr().err.strip())
+    assert structured_log["event"] == "vertex_gemini_error"
+    assert structured_log["operation"] == "generate_content"
+    assert structured_log["model"] == gemini_service.GEMINI_MODEL
+    assert structured_log["exception_type"] == "RuntimeError"
+
+
+def test_permission_errors_do_not_surface_vertex_configuration():
+    error = google_exceptions.Forbidden("Permission 'aiplatform.endpoints.predict' denied")
+
+    assert gemini_service.clean_gemini_error(error) == "Gemini is not available right now. Please try again later."
 
 
 def test_analyze_image_uses_vertex_model(monkeypatch, tmp_path):
