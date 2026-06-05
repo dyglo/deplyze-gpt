@@ -238,7 +238,7 @@ jobs:
               "FIREBASE_PROJECT_ID": "vision-sys",
               "GOOGLE_CLOUD_PROJECT": "vision-sys",
               "GCLOUD_PROJECT": "vision-sys",
-              "CORS_ORIGINS": "https://vision-sys.web.app,https://vision-sys.firebaseapp.com",
+              "CORS_ORIGINS": "https://vision-sys.web.app,https://vision-sys.firebaseapp.com,https://deplyzegpt.xyz",
           }
 
           Path("cloud-run-env.yaml").write_text(
@@ -385,7 +385,7 @@ jobs:
           REACT_APP_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}
           REACT_APP_FIREBASE_APP_ID: ${{ secrets.REACT_APP_FIREBASE_APP_ID }}
           REACT_APP_FIREBASE_MEASUREMENT_ID: ${{ secrets.REACT_APP_FIREBASE_MEASUREMENT_ID }}
-          REACT_APP_BACKEND_URL: https://vision-sys.web.app
+          REACT_APP_BACKEND_URL: https://deplyzegpt-api-eespme2hdq-ew.a.run.app
         run: npm run build
 
       - name: Deploy Firebase Hosting
