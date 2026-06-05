@@ -23,7 +23,7 @@ import SettingsModal from "./SettingsModal";
 const NAV_ITEMS = [
   { id: "dataset", label: "Dataset", icon: Inbox, view: "dataset" },
   { id: "artifacts", label: "Artifacts", icon: Share2 },
-  { id: "code", label: "Code", icon: Code2 },
+  { id: "benchmark", label: "Benchmark", icon: Code2, comingSoon: true },
 ];
 
 function initialsFromUser(user) {
@@ -334,24 +334,37 @@ export default function Sidebar({
           </button>
 
           <nav className={`mt-2 flex flex-col gap-1 ${collapsed ? "items-center" : ""}`}>
-            {NAV_ITEMS.map(({ id, label, icon: Icon, view }) => {
+            {NAV_ITEMS.map(({ id, label, icon: Icon, view, comingSoon }) => {
               const isActive = view ? activeView === view : false;
               return (
                 <button
                   key={id}
                   type="button"
-                  onClick={() => view && onSelectView?.(view)}
-                  className={`flex h-9 items-center gap-3 rounded-lg text-sm transition ${collapsed ? "w-9 justify-center px-0" : "px-3"}`}
+                  onClick={() => { if (comingSoon) return; if (view) onSelectView?.(view); }}
+                  aria-disabled={comingSoon || undefined}
+                  className={`flex h-9 items-center gap-3 rounded-lg text-sm transition ${collapsed ? "w-9 justify-center px-0" : "px-3"} ${comingSoon ? "cursor-default" : ""}`}
                   style={{
                     background: isActive ? "var(--bg-elevated)" : "transparent",
-                    color: "var(--text-primary)",
+                    color: comingSoon ? "var(--text-muted)" : "var(--text-primary)",
                   }}
-                  onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--bg-hover)"; }}
+                  onMouseEnter={(e) => { if (!isActive && !comingSoon) e.currentTarget.style.background = "var(--bg-hover)"; }}
                   onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
-                  title={label}
+                  title={comingSoon ? `${label} — Coming soon` : label}
                 >
                   <Icon size={17} className="flex-none" />
                   {!collapsed && <span className="min-w-0 truncate">{label}</span>}
+                  {!collapsed && comingSoon && (
+                    <span
+                      className="ml-auto flex-none rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide"
+                      style={{
+                        color: "var(--accent)",
+                        background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+                        border: "1px solid color-mix(in srgb, var(--accent) 32%, transparent)",
+                      }}
+                    >
+                      Soon
+                    </span>
+                  )}
                 </button>
               );
             })}

@@ -41,6 +41,28 @@ export default function DatasetPage({ onNewDataset }) {
   return (
     <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg-app)" }}>
       <div className="mx-auto w-full px-8 py-10" style={{ maxWidth: "960px" }}>
+        {/* Coming soon banner */}
+        <div
+          className="mb-8 flex items-center gap-3 rounded-xl px-4 py-3"
+          style={{
+            background: "color-mix(in srgb, var(--accent) 9%, var(--bg-elevated))",
+            border: "1px solid color-mix(in srgb, var(--accent) 30%, transparent)",
+          }}
+        >
+          <span
+            className="flex-none rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
+            style={{
+              color: "var(--accent)",
+              background: "color-mix(in srgb, var(--accent) 16%, transparent)",
+            }}
+          >
+            Coming soon
+          </span>
+          <p className="min-w-0 text-sm leading-snug" style={{ color: "var(--text-muted)" }}>
+            Datasets are actively being built. Explore the preview below — full functionality lands soon.
+          </p>
+        </div>
+
         {/* Header */}
         <div className="flex items-center justify-between gap-4">
           <h1 className="font-serif-display text-[34px] leading-none" style={{ color: "var(--text-primary)" }}>
