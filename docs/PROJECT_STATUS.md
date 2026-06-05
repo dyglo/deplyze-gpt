@@ -7,11 +7,11 @@ DeplyzeGPT is now a Firebase-authenticated computer vision studio with persisten
 ## Stack
 
 - Frontend: React, CRA, Firebase client SDK, lucide icons.
-- Backend: FastAPI, Firebase Admin SDK, Firestore, Cloudflare R2, Google GenAI SDK, OpenCV, Ultralytics.
+- Backend: FastAPI, Firebase Admin SDK, Firestore, Cloudflare R2, Vertex AI SDK, OpenCV, Ultralytics.
 - Auth: Firebase Auth ID tokens on all `/api/*` requests.
 - Persistence: Firestore jobs, sessions, and messages.
 - Object storage: Cloudflare R2 with S3-compatible API.
-- Models: `gemini-2.5-flash-lite`, YOLO26, YOLO26-Seg, YOLO26-Sem.
+- Models: `gemini-3-flash-preview`, YOLO26, YOLO26-Seg, YOLO26-Sem.
 
 ## Implemented Workflows
 

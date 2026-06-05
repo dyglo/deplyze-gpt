@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
+  sendEmailVerification,
   signInWithEmailAndPassword,
   signInWithPopup,
   updateProfile,
@@ -75,6 +76,11 @@ export default function AuthPage() {
         const credential = await createUserWithEmailAndPassword(auth, form.email, form.password);
         if (form.name.trim()) {
           await updateProfile(credential.user, { displayName: form.name.trim() });
+        }
+        try {
+          await sendEmailVerification(credential.user);
+        } catch (verificationError) {
+          console.warn("Verification email could not be sent automatically.", verificationError);
         }
       } else {
         await signInWithEmailAndPassword(auth, form.email, form.password);

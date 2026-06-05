@@ -11,7 +11,7 @@ DeplyzeGPT is an authenticated computer vision studio for image and video analys
 - Sidebar session list with newest-first ordering, pinned sessions, rename, pin/unpin, and delete.
 - Full multi-turn conversation restore from Firestore.
 - Fresh one-hour R2 presigned URLs generated when session messages are read.
-- Gemini image and video analysis with `gemini-2.5-flash-lite`.
+- Gemini image and video analysis with Vertex AI `gemini-3-flash-preview`.
 - YOLO26 object detection, instance segmentation, and semantic segmentation.
 - Firestore-backed video job status updates.
 
@@ -98,8 +98,10 @@ R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
 
 FIREBASE_SERVICE_ACCOUNT_PATH=../vision-sys-firebase-adminsdk-example.json
 
-GEMINI_API_KEY=<gemini-api-key>
-GEMINI_MODEL=gemini-2.5-flash-lite
+VERTEX_AI_PROJECT=vision-sys
+VERTEX_AI_LOCATION=global
+VERTEX_GCS_BUCKET=vision-sys.firebasestorage.app
+GEMINI_MODEL=gemini-3-flash-preview
 ```
 
 Create `frontend/.env`:
@@ -209,7 +211,7 @@ Manual smoke flow:
 - `WinError 10048`: port `8000` is already in use. Stop the existing backend process before starting another one.
 - `/api/sessions` returns `401`: expected when no Firebase bearer token is sent.
 - `/api/sessions` returns `404`: the backend process is stale or running from the wrong folder. Restart `uvicorn` from `backend/`.
-- Gemini says the model does not support thinking level: use `thinkingBudget` for `gemini-2.5-flash-lite`; this repo already uses `thinkingBudget=0`.
+- Vertex Gemini authentication fails locally: confirm `FIREBASE_SERVICE_ACCOUNT_PATH` points to a service account with Vertex AI access.
 
 ## Production Notes
 

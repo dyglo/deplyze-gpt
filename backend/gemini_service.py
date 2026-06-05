@@ -1,43 +1,207 @@
 import asyncio
+import base64
+import json
 import logging
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+import google.auth
+from google.api_core import exceptions as google_exceptions
+from google.cloud import storage
+from google.oauth2 import service_account
+import vertexai
+from vertexai.generative_models import GenerationConfig, GenerativeModel, Image, Part
 
 load_dotenv(Path(__file__).parent / ".env")
 
 logger = logging.getLogger(__name__)
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+ROOT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT_DIR.parent
+
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
+HIGH_DEMAND_MESSAGE = "Our AI model is experiencing high demand. Please try again in a moment."
+GENERIC_GEMINI_MESSAGE = "Gemini analysis failed. Please try again."
+GOOGLE_CLOUD_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
+RETRY_DELAYS_SECONDS = (2, 4, 8)
+
+_CREDENTIALS = None
+_STORAGE_CLIENT = None
+_VERTEX_INITIALIZED = False
 
 
 class GeminiServiceError(RuntimeError):
     pass
 
 
+def _vertex_project() -> str:
+    return (
+        os.environ.get("VERTEX_AI_PROJECT")
+        or os.environ.get("GOOGLE_CLOUD_PROJECT")
+        or os.environ.get("GCLOUD_PROJECT")
+        or "vision-sys"
+    )
+
+
+def _vertex_location() -> str:
+    return os.environ.get("VERTEX_AI_LOCATION") or os.environ.get("GOOGLE_CLOUD_LOCATION") or "global"
+
+
+def _vertex_gcs_bucket() -> str:
+    return (
+        os.environ.get("VERTEX_GCS_BUCKET")
+        or os.environ.get("VERTEX_STAGING_BUCKET")
+        or os.environ.get("FIREBASE_STORAGE_BUCKET")
+        or "vision-sys.firebasestorage.app"
+    )
+
+
+def _resolve_service_account_path() -> Path | None:
+    configured = os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH")
+    if configured:
+        path = Path(configured)
+        if not path.is_absolute():
+            path = (ROOT_DIR / path).resolve()
+        return path
+
+    matches = sorted(PROJECT_ROOT.glob("*firebase-adminsdk*.json"))
+    return matches[0] if matches else None
+
+
+def _service_account_info() -> dict | None:
+    encoded = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON_B64")
+    raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+    if encoded:
+        raw = base64.b64decode(encoded).decode("utf-8")
+    return json.loads(raw) if raw else None
+
+
+def _get_google_credentials():
+    global _CREDENTIALS
+
+    if _CREDENTIALS is not None:
+        return _CREDENTIALS
+
+    service_account_info = _service_account_info()
+    if service_account_info:
+        _CREDENTIALS = service_account.Credentials.from_service_account_info(
+            service_account_info,
+            scopes=GOOGLE_CLOUD_SCOPES,
+        )
+        return _CREDENTIALS
+
+    service_account_path = _resolve_service_account_path()
+    if service_account_path and service_account_path.exists():
+        _CREDENTIALS = service_account.Credentials.from_service_account_file(
+            str(service_account_path),
+            scopes=GOOGLE_CLOUD_SCOPES,
+        )
+        return _CREDENTIALS
+
+    try:
+        _CREDENTIALS, _ = google.auth.default(scopes=GOOGLE_CLOUD_SCOPES)
+        return _CREDENTIALS
+    except Exception as exc:
+        logger.error("Vertex AI credentials could not be resolved: %s", exc, exc_info=True)
+        raise GeminiServiceError("Gemini is not configured. Check Vertex AI credentials.") from exc
+
+
+def _initialize_vertex():
+    global _VERTEX_INITIALIZED
+
+    if _VERTEX_INITIALIZED:
+        return
+
+    vertexai.init(
+        project=_vertex_project(),
+        location=_vertex_location(),
+        credentials=_get_google_credentials(),
+    )
+    _VERTEX_INITIALIZED = True
+
+
+def _get_storage_client() -> storage.Client:
+    global _STORAGE_CLIENT
+
+    if _STORAGE_CLIENT is None:
+        _STORAGE_CLIENT = storage.Client(project=_vertex_project(), credentials=_get_google_credentials())
+    return _STORAGE_CLIENT
+
+
+def _get_model(system_prompt: str) -> GenerativeModel:
+    _initialize_vertex()
+    return GenerativeModel(GEMINI_MODEL, system_instruction=[system_prompt])
+
+
+def _generate_config() -> GenerationConfig:
+    return GenerationConfig(max_output_tokens=2048)
+
+
+def _is_quota_or_rate_limit_error(exc: Exception) -> bool:
+    if isinstance(exc, (google_exceptions.ResourceExhausted, google_exceptions.TooManyRequests)):
+        return True
+
+    code = getattr(exc, "code", None)
+    if callable(code):
+        try:
+            code = code()
+        except Exception:
+            code = None
+    if str(code).lower() in {"429", "statuscode.resource_exhausted", "resource_exhausted"}:
+        return True
+
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "429",
+            "resource_exhausted",
+            "quota",
+            "rate limit",
+            "rate-limit",
+            "too many requests",
+        )
+    )
+
+
 def clean_gemini_error(exc: Exception) -> str:
     message = str(exc)
     lower = message.lower()
+    if _is_quota_or_rate_limit_error(exc):
+        return HIGH_DEMAND_MESSAGE
     if "503" in lower or "unavailable" in lower or "high demand" in lower:
         return "Gemini is temporarily busy. Please try again in a moment."
-    if "429" in lower or "quota" in lower or "rate limit" in lower:
-        return "Gemini usage limit was reached. Please wait a bit and try again."
-    if "api key" in lower or "permission" in lower or "unauthorized" in lower:
-        return "Gemini is not available right now. Check the API key configuration."
+    if "permission" in lower or "unauthorized" in lower or "forbidden" in lower:
+        return "Gemini is not available right now. Check the Vertex AI configuration."
     if "timeout" in lower:
         return "Gemini took too long to respond. Please try again."
-    return "Gemini analysis failed. Please try again."
+    return GENERIC_GEMINI_MESSAGE
 
 
 def _raise_clean_gemini_error(exc: Exception):
-    logger.warning("Gemini provider error: %s", exc)
+    logger.warning("Gemini provider error: %s", exc, exc_info=True)
     raise GeminiServiceError(clean_gemini_error(exc)) from exc
+
+
+def _generate_with_retry(operation):
+    for attempt in range(len(RETRY_DELAYS_SECONDS) + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            if not _is_quota_or_rate_limit_error(exc):
+                _raise_clean_gemini_error(exc)
+
+            if attempt >= len(RETRY_DELAYS_SECONDS):
+                logger.warning("Vertex Gemini quota/rate limit exhausted after retries: %s", exc, exc_info=True)
+                raise GeminiServiceError(HIGH_DEMAND_MESSAGE) from exc
+
+            delay = RETRY_DELAYS_SECONDS[attempt]
+            logger.info("Vertex Gemini quota/rate limit encountered. Retrying in %s seconds.", delay)
+            time.sleep(delay)
 
 DOMAIN_PROMPTS = {
     "medical": (
@@ -111,20 +275,6 @@ def _extract_suggestions(text: str) -> list:
     return []
 
 
-def _get_client() -> genai.Client:
-    if not GEMINI_API_KEY:
-        raise GeminiServiceError("Gemini is not configured. Add GEMINI_API_KEY to backend/.env.")
-    return genai.Client(api_key=GEMINI_API_KEY, http_options={"api_version": "v1beta"})
-
-
-def _generate_config(system_prompt: str) -> types.GenerateContentConfig:
-    return types.GenerateContentConfig(
-        systemInstruction=system_prompt,
-        maxOutputTokens=2048,
-        thinkingConfig=types.ThinkingConfig(thinkingBudget=0),
-    )
-
-
 def _response_text(response) -> str:
     if getattr(response, "text", None):
         return response.text.strip()
@@ -139,27 +289,6 @@ def _response_text(response) -> str:
     return "\n".join(parts).strip()
 
 
-def _state_name(file_obj) -> str:
-    state = getattr(file_obj, "state", None)
-    return getattr(state, "name", str(state)).upper()
-
-
-def _wait_for_uploaded_file(client: genai.Client, uploaded_file, timeout_seconds: int = 300):
-    deadline = time.monotonic() + timeout_seconds
-    current = uploaded_file
-
-    while _state_name(current).endswith("PROCESSING"):
-        if time.monotonic() >= deadline:
-            raise TimeoutError("Gemini video upload processing timed out")
-        time.sleep(2)
-        current = client.files.get(name=current.name)
-
-    state = _state_name(current)
-    if not state.endswith("ACTIVE"):
-        raise RuntimeError(f"Gemini video upload failed with state: {state}")
-    return current
-
-
 def _build_result(text: str, fallback_suggestions: list = None) -> dict:
     suggestions = _extract_suggestions(text)
     return {
@@ -170,23 +299,36 @@ def _build_result(text: str, fallback_suggestions: list = None) -> dict:
     }
 
 
+def _upload_video_to_gcs(path: Path, mime_type: str):
+    bucket_name = _vertex_gcs_bucket()
+    if not bucket_name:
+        raise GeminiServiceError("Gemini video analysis is not configured. Add VERTEX_GCS_BUCKET.")
+
+    blob_name = f"gemini-inputs/{uuid.uuid4().hex}/{path.name}"
+    try:
+        bucket = _get_storage_client().bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        blob.upload_from_filename(str(path), content_type=mime_type)
+        return f"gs://{bucket_name}/{blob_name}", blob
+    except Exception as exc:
+        logger.error("Gemini video staging upload failed: %s", exc, exc_info=True)
+        raise GeminiServiceError(GENERIC_GEMINI_MESSAGE) from exc
+
+
 def _analyze_image_sync(file_path: str, prompt: str, system_prompt: str) -> dict:
     path = Path(file_path)
-    ext = path.suffix.lower().lstrip(".")
-    mime_type = MIME_IMAGE.get(ext, "image/jpeg")
 
-    client = _get_client()
-    try:
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
+    model = _get_model(system_prompt)
+    image_part = Part.from_image(Image.load_from_file(str(path)))
+    response = _generate_with_retry(
+        lambda: model.generate_content(
             contents=[
-                types.Part.from_text(text=prompt),
-                types.Part.from_bytes(data=path.read_bytes(), mime_type=mime_type),
+                Part.from_text(prompt),
+                image_part,
             ],
-            config=_generate_config(system_prompt),
+            generation_config=_generate_config(),
         )
-    except Exception as exc:
-        _raise_clean_gemini_error(exc)
+    )
     return _build_result(_response_text(response))
 
 
@@ -195,28 +337,21 @@ def _analyze_video_sync(file_path: str, prompt: str, system_prompt: str) -> dict
     ext = path.suffix.lower().lstrip(".")
     mime_type = MIME_VIDEO.get(ext, "video/mp4")
 
-    client = _get_client()
+    gcs_uri = None
+    staged_blob = None
     try:
-        uploaded_file = client.files.upload(
-            file=str(path),
-            config=types.UploadFileConfig(mimeType=mime_type, displayName=path.name),
-        )
-    except Exception as exc:
-        _raise_clean_gemini_error(exc)
-
-    try:
-        try:
-            active_file = _wait_for_uploaded_file(client, uploaded_file)
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
+        gcs_uri, staged_blob = _upload_video_to_gcs(path, mime_type)
+        model = _get_model(system_prompt)
+        video_part = Part.from_uri(uri=gcs_uri, mime_type=mime_type)
+        response = _generate_with_retry(
+            lambda: model.generate_content(
                 contents=[
-                    types.Part.from_text(text=prompt),
-                    active_file,
+                    Part.from_text(prompt),
+                    video_part,
                 ],
-                config=_generate_config(system_prompt),
+                generation_config=_generate_config(),
             )
-        except Exception as exc:
-            _raise_clean_gemini_error(exc)
+        )
         return _build_result(
             _response_text(response),
             [
@@ -226,10 +361,11 @@ def _analyze_video_sync(file_path: str, prompt: str, system_prompt: str) -> dict
             ],
         )
     finally:
-        try:
-            client.files.delete(name=uploaded_file.name)
-        except Exception as exc:
-            logger.warning("Gemini uploaded-file cleanup failed: %s", exc)
+        if staged_blob is not None:
+            try:
+                staged_blob.delete()
+            except Exception as exc:
+                logger.warning("Gemini staged video cleanup failed for %s: %s", gcs_uri, exc)
 
 
 async def analyze_image_gemini(file_path: str, prompt: str) -> dict:

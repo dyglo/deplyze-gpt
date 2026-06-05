@@ -2,7 +2,7 @@ import React, { useRef, useEffect } from "react";
 import { Download, Film, AlertCircle, Loader2 } from "lucide-react";
 
 const MODEL_LABELS = {
-  gemini: "Gemini 2.5 Flash-Lite",
+  gemini: "Gemini 3 Flash",
   yolo26: "YOLO26 Detection",
   "yolo26-seg": "YOLO26 Segmentation",
   "yolo26-sem": "YOLO26 Semantic",
