@@ -10,20 +10,6 @@ import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { auth } from "../firebase";
 
 
-function BrandMark() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M4 16 9 5l3 6 3-6 5 11"
-        stroke="#171717"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 function GoogleIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
@@ -113,7 +99,7 @@ export default function AuthPage() {
   };
 
   return (
-    <main className="min-h-screen w-full grid lg:grid-cols-2 bg-white text-neutral-900">
+    <main className="h-screen w-full overflow-y-auto grid lg:grid-cols-2 bg-white text-neutral-900">
       {/* Left — brand panel */}
       <aside
         className="relative hidden lg:flex flex-col justify-between p-10 overflow-hidden"
@@ -123,31 +109,31 @@ export default function AuthPage() {
         }}
       >
         <div className="flex items-center gap-2">
-          <BrandMark />
           <span className="text-lg font-semibold tracking-tight text-neutral-900">DeplyzeGPT</span>
         </div>
 
         <div className="max-w-sm">
-          <p className="text-sm font-medium text-neutral-800/80">You can easily</p>
+          <p className="text-sm font-medium text-neutral-800/80">Computer vision, simplified</p>
           <h2 className="mt-2 text-3xl font-semibold leading-snug tracking-tight text-neutral-900">
-            Get access to your personal hub for clarity and productivity.
+            Analyze images and videos with state-of-the-art AI models. Detection, segmentation, and semantic understanding in seconds.
           </h2>
         </div>
       </aside>
 
       {/* Right — form panel */}
-      <section className="flex items-center justify-center px-6 py-8 sm:px-12">
+      <section className="flex min-h-screen items-center justify-center px-5 py-10 sm:px-12 lg:min-h-0">
         <div className="w-full max-w-sm">
           {/* mobile brand */}
           <div className="mb-6 flex items-center gap-2 lg:hidden">
-            <BrandMark />
             <span className="text-lg font-semibold tracking-tight">DeplyzeGPT</span>
           </div>
 
           <div className="text-orange-500 text-xl leading-none mb-3" aria-hidden="true">✳</div>
 
           <h1 className="text-2xl font-semibold tracking-tight">{heading}</h1>
-          <p className="mt-1.5 text-sm leading-relaxed text-neutral-500">{subheading}</p>
+          {!isSignUp && (
+            <p className="mt-1.5 text-sm leading-relaxed text-neutral-500">{subheading}</p>
+          )}
 
           <form onSubmit={submitEmail} className="mt-6 space-y-3.5">
             {isSignUp && (
@@ -162,7 +148,7 @@ export default function AuthPage() {
                   onChange={updateField}
                   autoComplete="name"
                   placeholder="Natalia Brak"
-                  className="mt-1.5 w-full h-10 rounded-lg border border-neutral-200 bg-white px-3.5 text-sm text-neutral-900 placeholder:text-neutral-400 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                  className="mt-1.5 w-full h-9 rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-900 placeholder:text-neutral-400 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
                 />
               </div>
             )}
@@ -180,7 +166,7 @@ export default function AuthPage() {
                 autoComplete="email"
                 required
                 placeholder="natalia.brak@knmstudio.com"
-                className="mt-1.5 w-full h-10 rounded-lg border border-neutral-200 bg-white px-3.5 text-sm text-neutral-900 placeholder:text-neutral-400 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                className="mt-1.5 w-full h-9 rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-900 placeholder:text-neutral-400 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
               />
             </div>
 
@@ -198,7 +184,7 @@ export default function AuthPage() {
                   autoComplete={isSignUp ? "new-password" : "current-password"}
                   required
                   placeholder="••••••••••••"
-                  className="w-full h-10 rounded-lg border border-neutral-200 bg-white px-3.5 pr-11 text-sm text-neutral-900 placeholder:text-neutral-400 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                  className="w-full h-9 rounded-lg border border-neutral-200 bg-white px-3 pr-11 text-sm text-neutral-900 placeholder:text-neutral-400 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
                 />
                 <button
                   type="button"
@@ -224,7 +210,7 @@ export default function AuthPage() {
                   onChange={updateField}
                   autoComplete="new-password"
                   placeholder="••••••••••••"
-                  className="mt-1.5 w-full h-10 rounded-lg border border-neutral-200 bg-white px-3.5 text-sm text-neutral-900 placeholder:text-neutral-400 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                  className="mt-1.5 w-full h-9 rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-900 placeholder:text-neutral-400 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
                 />
               </div>
             )}

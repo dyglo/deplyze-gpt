@@ -22,7 +22,7 @@ import SettingsModal from "./SettingsModal";
 
 const NAV_ITEMS = [
   { id: "dataset", label: "Dataset", icon: Inbox, view: "dataset" },
-  { id: "artifacts", label: "Artifacts", icon: Share2 },
+  { id: "artifacts", label: "Artifacts", icon: Share2, comingSoon: true },
   { id: "benchmark", label: "Benchmark", icon: Code2, comingSoon: true },
 ];
 
