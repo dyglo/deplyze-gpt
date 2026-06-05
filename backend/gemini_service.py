@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -168,6 +169,49 @@ def _is_quota_or_rate_limit_error(exc: Exception) -> bool:
     )
 
 
+def _exception_code(exc: Exception) -> str:
+    code = getattr(exc, "code", None)
+    if callable(code):
+        try:
+            code = code()
+        except Exception:
+            code = None
+    return str(code) if code is not None else ""
+
+
+def _exception_error_details(exc: Exception) -> list:
+    details = []
+
+    for attr in ("errors", "details"):
+        value = getattr(exc, attr, None)
+        if callable(value):
+            try:
+                value = value()
+            except Exception:
+                value = None
+        if value:
+            details.append(str(value))
+
+    return details
+
+
+def _log_vertex_error(exc: Exception, *, operation: str, attempt: int | None = None):
+    payload = {
+        "severity": "ERROR",
+        "event": "vertex_gemini_error",
+        "operation": operation,
+        "attempt": attempt,
+        "model": GEMINI_MODEL,
+        "vertex_project": _vertex_project(),
+        "vertex_location": _vertex_location(),
+        "exception_type": type(exc).__name__,
+        "exception_code": _exception_code(exc),
+        "exception_message": str(exc),
+        "error_details": _exception_error_details(exc),
+    }
+    print(json.dumps(payload, default=str), file=sys.stderr, flush=True)
+
+
 def clean_gemini_error(exc: Exception) -> str:
     message = str(exc)
     lower = message.lower()
@@ -176,13 +220,14 @@ def clean_gemini_error(exc: Exception) -> str:
     if "503" in lower or "unavailable" in lower or "high demand" in lower:
         return "Gemini is temporarily busy. Please try again in a moment."
     if "permission" in lower or "unauthorized" in lower or "forbidden" in lower:
-        return "Gemini is not available right now. Check the Vertex AI configuration."
+        return "Gemini is not available right now. Please try again later."
     if "timeout" in lower:
         return "Gemini took too long to respond. Please try again."
     return GENERIC_GEMINI_MESSAGE
 
 
 def _raise_clean_gemini_error(exc: Exception):
+    _log_vertex_error(exc, operation="generate_content")
     logger.warning("Gemini provider error: %s", exc, exc_info=True)
     raise GeminiServiceError(clean_gemini_error(exc)) from exc
 
@@ -196,10 +241,12 @@ def _generate_with_retry(operation):
                 _raise_clean_gemini_error(exc)
 
             if attempt >= len(RETRY_DELAYS_SECONDS):
+                _log_vertex_error(exc, operation="generate_content", attempt=attempt + 1)
                 logger.warning("Vertex Gemini quota/rate limit exhausted after retries: %s", exc, exc_info=True)
                 raise GeminiServiceError(HIGH_DEMAND_MESSAGE) from exc
 
             delay = RETRY_DELAYS_SECONDS[attempt]
+            _log_vertex_error(exc, operation="generate_content_retryable", attempt=attempt + 1)
             logger.info("Vertex Gemini quota/rate limit encountered. Retrying in %s seconds.", delay)
             time.sleep(delay)
 
