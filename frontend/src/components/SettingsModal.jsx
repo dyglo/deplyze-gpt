@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Settings as SettingsIcon,
   UserRound,
@@ -9,7 +9,14 @@ import {
   Moon,
   Monitor,
   MoreVertical,
+  Camera,
+  Loader2,
+  Check,
 } from "lucide-react";
+import { updateProfile } from "firebase/auth";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+import { auth, db, storage } from "../firebase";
 import { useTheme } from "../theme";
 
 /*
@@ -87,11 +94,97 @@ function TextInput({ c, value, onChange, placeholder, width = 280 }) {
   );
 }
 
-function GeneralPanel({ c, user, themePref, onThemeChange }) {
+function GeneralPanel({ c, user, themePref, onThemeChange, onProfileUpdate }) {
   const fallbackName = user?.displayName || user?.email?.split("@")[0] || "";
   const initial = (fallbackName.trim()[0] || "U").toUpperCase();
   const [fullName, setFullName] = useState(fallbackName);
   const [callName, setCallName] = useState(fallbackName);
+  const [photoURL, setPhotoURL] = useState(user?.photoURL || "");
+  const [uploading, setUploading] = useState(false);
+  const [savingName, setSavingName] = useState(false);
+  const [nameSaved, setNameSaved] = useState(false);
+  const [error, setError] = useState("");
+  const fileInputRef = useRef(null);
+  const saveTimer = useRef(null);
+  const savedTimer = useRef(null);
+
+  // Keep local fields in sync if the underlying user changes.
+  useEffect(() => {
+    setFullName(user?.displayName || user?.email?.split("@")[0] || "");
+    setPhotoURL(user?.photoURL || "");
+  }, [user]);
+
+  useEffect(() => () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+  }, []);
+
+  // Debounced auto-save of the display name to Firebase Auth + Firestore.
+  const handleNameChange = (value) => {
+    setFullName(value);
+    setError("");
+    setNameSaved(false);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      const clean = value.trim();
+      if (!clean || !auth.currentUser || clean === (user?.displayName || "")) return;
+      setSavingName(true);
+      Promise.all([
+        updateProfile(auth.currentUser, { displayName: clean }),
+        setDoc(
+          doc(db, "users", auth.currentUser.uid),
+          { displayName: clean, email: auth.currentUser.email || null, updatedAt: serverTimestamp() },
+          { merge: true }
+        ),
+      ])
+        .then(() => {
+          onProfileUpdate?.();
+          setNameSaved(true);
+          if (savedTimer.current) clearTimeout(savedTimer.current);
+          savedTimer.current = setTimeout(() => setNameSaved(false), 1800);
+        })
+        .catch(() => setError("Couldn't save your name. Try again."))
+        .finally(() => setSavingName(false));
+    }, 600);
+  };
+
+  // Upload avatar to Firebase Storage and save its URL to the profile.
+  const handleAvatarSelect = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !auth.currentUser) return;
+    if (!file.type.startsWith("image/")) {
+      setError("Please choose an image file.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError("Image must be under 5 MB.");
+      return;
+    }
+    setError("");
+    setUploading(true);
+    try {
+      const uid = auth.currentUser.uid;
+      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+      const ref = storageRef(storage, `users/${uid}/avatar/profile.${ext}`);
+      await uploadBytes(ref, file, { contentType: file.type });
+      const url = await getDownloadURL(ref);
+      await Promise.all([
+        updateProfile(auth.currentUser, { photoURL: url }),
+        setDoc(
+          doc(db, "users", uid),
+          { photoURL: url, email: auth.currentUser.email || null, updatedAt: serverTimestamp() },
+          { merge: true }
+        ),
+      ]);
+      setPhotoURL(url);
+      onProfileUpdate?.();
+    } catch (err) {
+      setError("Avatar upload failed. Try again.");
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const themeOptions = [
     { id: "system", icon: Monitor, label: "System" },
@@ -105,17 +198,47 @@ function GeneralPanel({ c, user, themePref, onThemeChange }) {
 
       <div className="mt-3">
         <Field c={c} label="Avatar" first>
-          <div
-            className="flex h-11 w-11 items-center justify-center rounded-full text-sm font-semibold"
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleAvatarSelect}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            aria-label="Change avatar"
+            className="group relative flex h-11 w-11 items-center justify-center overflow-hidden rounded-full text-sm font-semibold transition"
             style={{ background: c.active, color: c.textMuted, border: `1px solid ${c.border}` }}
+            title="Upload a new avatar"
           >
-            {initial}
-          </div>
+            {photoURL ? (
+              <img src={photoURL} alt="Avatar" className="h-full w-full object-cover" />
+            ) : (
+              initial
+            )}
+            <span
+              className="absolute inset-0 flex items-center justify-center opacity-0 transition group-hover:opacity-100"
+              style={{ background: "rgba(0,0,0,0.45)", color: "#fff" }}
+            >
+              {uploading ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
+            </span>
+          </button>
         </Field>
 
         <Field c={c} label="Full name">
-          <TextInput c={c} value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Your name" />
+          <div className="flex items-center gap-2">
+            {savingName && <Loader2 size={15} className="animate-spin" style={{ color: c.textFaint }} />}
+            {nameSaved && !savingName && <Check size={15} style={{ color: c.accent }} />}
+            <TextInput c={c} value={fullName} onChange={(e) => handleNameChange(e.target.value)} placeholder="Your name" />
+          </div>
         </Field>
+
+        {error && (
+          <p className="-mt-2 mb-1 text-[13px]" style={{ color: "#E5484D" }}>{error}</p>
+        )}
 
         <Field c={c} label="What should Claude call you?">
           <TextInput c={c} value={callName} onChange={(e) => setCallName(e.target.value)} placeholder="Nickname" />
@@ -274,7 +397,7 @@ function AccountPanel({ c, user, onSignOut }) {
   );
 }
 
-export default function SettingsModal({ open, onClose, user, onSignOut }) {
+export default function SettingsModal({ open, onClose, user, onSignOut, onProfileUpdate }) {
   const [section, setSection] = useState("general");
   const [query, setQuery] = useState("");
   const { preference: themePref, resolved, setTheme } = useTheme();
@@ -367,7 +490,7 @@ export default function SettingsModal({ open, onClose, user, onSignOut }) {
           {section === "account" ? (
             <AccountPanel c={c} user={user} onSignOut={onSignOut} />
           ) : (
-            <GeneralPanel c={c} user={user} themePref={themePref} onThemeChange={setTheme} />
+            <GeneralPanel c={c} user={user} themePref={themePref} onThemeChange={setTheme} onProfileUpdate={onProfileUpdate} />
           )}
         </div>
       </div>
