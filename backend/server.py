@@ -655,7 +655,7 @@ async def analyze_video(request: Request, payload: VideoAnalysisRequest, backgro
 
         with tempfile.TemporaryDirectory(prefix="deplyzegpt-locate-video-preflight-") as tmp:
             input_path, _job = _download_job_input(uid, job_id, Path(tmp))
-            duration_seconds = _get_video_duration_seconds(str(input_path))
+            duration_seconds = locate_video_processor.get_video_metadata(str(input_path)).duration_seconds
             try:
                 locate_video_processor.validate_video_duration(duration_seconds)
             except locate_video_processor.LocateVideoError as e:
