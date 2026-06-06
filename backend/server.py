@@ -31,6 +31,8 @@ from session_service import (
     name_from_context,
     update_session,
 )
+from gemini_service import GeminiServiceError
+from locate_service import MODEL_TYPE as LOCATE_MODEL_TYPE, LocateServiceError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -440,7 +442,7 @@ async def analyze_image(request: Request, payload: ImageAnalysisRequest):
     )
 
     class_filter_ids = None
-    if payload.model != "gemini":
+    if payload.model not in {"gemini", LOCATE_MODEL_TYPE}:
         from yolo_service import ClassFilterError, resolve_class_filter
 
         try:
@@ -474,7 +476,7 @@ async def analyze_image(request: Request, payload: ImageAnalysisRequest):
         filepath, _job = _download_job_input(uid, job_id, Path(tmp))
         try:
             if payload.model == "gemini":
-                from gemini_service import analyze_image_gemini, GeminiServiceError
+                from gemini_service import analyze_image_gemini
                 result = await analyze_image_gemini(str(filepath), payload.prompt)
                 update_job(uid, job_id, {"status": "done", "progress": 100, "output_url": None})
                 add_message(
@@ -491,6 +493,45 @@ async def analyze_image(request: Request, payload: ImageAnalysisRequest):
                 )
                 result["session_id"] = session_id
                 result["job_id"] = job_id
+                return result
+
+            if payload.model == LOCATE_MODEL_TYPE:
+                from locate_service import analyze_image_locate
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(executor, analyze_image_locate, str(filepath), payload.prompt)
+                image_bytes, content_type = _decode_data_uri(result["content"])
+                output_key = _storage_key(uid, session_id, job_id, "outputs", "output.jpg")
+                upload_bytes(output_key, image_bytes, content_type)
+                output_url = presigned_get_url(output_key)
+                update_job(
+                    uid,
+                    job_id,
+                    {
+                        "status": "done",
+                        "progress": 100,
+                        "output_key": output_key,
+                        "output_r2_path": output_key,
+                        "output_url": None,
+                    },
+                )
+                add_message(
+                    uid,
+                    session_id,
+                    {
+                        "role": "assistant",
+                        "content": "Image grounding complete.",
+                        "output_type": "image",
+                        "output_r2_path": output_key,
+                        "job_id": job_id,
+                        "model": payload.model,
+                        "detections": result.get("detections", []),
+                        "suggestions": result.get("suggestions", []),
+                    },
+                )
+                result["content"] = output_url
+                result["download_url"] = _download_url_for_output_key(output_key)
+                result["job_id"] = job_id
+                result["session_id"] = session_id
                 return result
 
             from yolo_service import analyze_image_yolo
@@ -535,6 +576,10 @@ async def analyze_image(request: Request, payload: ImageAnalysisRequest):
         except FileNotFoundError as e:
             update_job(uid, job_id, {"status": "failed", "error": str(e)[:500]})
             raise HTTPException(404, str(e))
+        except LocateServiceError as e:
+            message = str(e)
+            update_job(uid, job_id, {"status": "failed", "error": message[:500]})
+            raise HTTPException(getattr(e, "status_code", 503), message)
         except GeminiServiceError as e:
             message = str(e)
             update_job(uid, job_id, {"status": "failed", "error": message})
@@ -550,6 +595,8 @@ async def analyze_video(request: Request, payload: VideoAnalysisRequest, backgro
     uid = _uid(request)
     if payload.model == "gemini":
         raise HTTPException(400, "Use /api/analyze/video/gemini for Gemini video analysis")
+    if payload.model == LOCATE_MODEL_TYPE:
+        raise HTTPException(422, "LocateAnything video analysis is not supported in v1. Upload an image instead.")
 
     job_id = _job_id_from_file_url(payload.file_url)
     if not job_id:
@@ -710,7 +757,7 @@ async def analyze_video_gemini_route(request: Request, payload: VideoGeminiReque
     with tempfile.TemporaryDirectory(prefix="deplyzegpt-gemini-video-") as tmp:
         filepath, _job = _download_job_input(uid, job_id, Path(tmp))
         try:
-            from gemini_service import analyze_video_gemini, GeminiServiceError
+            from gemini_service import analyze_video_gemini
             result = await analyze_video_gemini(str(filepath), payload.prompt)
             update_job(uid, job_id, {"status": "done", "progress": 100, "output_url": None})
             add_message(

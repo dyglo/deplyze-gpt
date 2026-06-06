@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { Plus, ArrowUp, X, Film, ChevronDown, Loader2, Mic, AudioLines, Sparkles, Layers, FileText, Users } from "lucide-react";
 
 const STARTER_CHIPS = [
@@ -22,6 +22,7 @@ export default function ChatInputBar({
   selectedModel,
   onModelSelect,
   models,
+  disabledModelIds = [],
   showSuggestions,
   onSuggestionClick,
   centered,
@@ -33,6 +34,7 @@ export default function ChatInputBar({
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   const currentModel = models.find(m => m.id === selectedModel) || models[0];
+  const disabledModelSet = useMemo(() => new Set(disabledModelIds), [disabledModelIds]);
   const hasPrompt = prompt.trim().length > 0;
   const canSend = !isAnalyzing && !isUploading && !inputFile?.uploading && !uploadError && (
     !!inputFile?.url || (hasContextFile && hasPrompt)
@@ -215,15 +217,21 @@ export default function ChatInputBar({
                 >
                   {models.map(m => {
                     const isActive = selectedModel === m.id;
+                    const isDisabled = disabledModelSet.has(m.id);
                     return (
                       <button
                         key={m.id}
                         data-testid={`model-option-${m.id}`}
-                        onClick={() => { onModelSelect(m.id); setDropdownOpen(false); }}
+                        onClick={() => {
+                          if (isDisabled) return;
+                          onModelSelect(m.id);
+                          setDropdownOpen(false);
+                        }}
+                        disabled={isDisabled}
                         className="w-full text-left px-3 py-2 flex items-start gap-3 transition-colors mx-0"
-                        style={{ background: "transparent" }}
-                        onMouseEnter={e => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                        style={{ background: "transparent", opacity: isDisabled ? 0.45 : 1, cursor: isDisabled ? "not-allowed" : "pointer" }}
+                        onMouseEnter={e => { if (!isDisabled) e.currentTarget.style.background = "var(--bg-hover)"; }}
+                        onMouseLeave={e => { if (!isDisabled) e.currentTarget.style.background = "transparent"; }}
                       >
                         <m.icon size={15} style={{ color: isActive ? "var(--accent)" : "var(--text-muted)", marginTop: "2px", flexShrink: 0 }} />
                         <div className="flex-1 min-w-0">

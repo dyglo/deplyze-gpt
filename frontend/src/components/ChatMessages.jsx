@@ -6,6 +6,7 @@ const MODEL_LABELS = {
   yolo26: "YOLO26 Detection",
   "yolo26-seg": "YOLO26 Segmentation",
   "yolo26-sem": "YOLO26 Semantic",
+  "locate-anything": "LocateAnything-3B",
 };
 
 function MarkdownText({ content }) {

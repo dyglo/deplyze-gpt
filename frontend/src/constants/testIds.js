@@ -26,6 +26,7 @@ export const MODEL = {
   yolo26: "model-card-yolo26",
   yolo26Seg: "model-card-yolo26-seg",
   yolo26Sem: "model-card-yolo26-sem",
+  locateAnything: "model-card-locate-anything",
 };
 
 export const CHAT = {
