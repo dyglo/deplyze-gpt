@@ -2,7 +2,7 @@
 
 ## Summary
 
-LocateAnything video analysis ships as sampled-frame grounding, not full-frame video rendering. The YOLO video path still produces an annotated MP4 through `backend/video_processor.py`; LocateAnything uses `backend/locate_video_processor.py` because a 3B VLM cannot run economically on every video frame.
+LocateAnything video analysis ships as sampled-frame grounding plus full-duration video rendering. The YOLO video path still produces an annotated MP4 through `backend/video_processor.py`; LocateAnything uses `backend/locate_video_processor.py` because a 3B VLM cannot run economically on every video frame.
 
 The v2.0 workflow keeps the existing async job shape: upload to R2, create a Firestore job, queue a FastAPI background task, update `jobs/{uid}/items/{job_id}`, and let the frontend listen for progress. The completed artifact is a browser-compatible annotated MP4, matching the YOLO video delivery contract.
 
@@ -11,16 +11,16 @@ The v2.0 workflow keeps the existing async job shape: upload to R2, create a Fir
 - Videos over `LOCATE_VIDEO_MAX_DURATION_SECONDS=180` are rejected for v2.0.
 - Uniform sampling targets one frame every `LOCATE_VIDEO_SAMPLE_SECONDS=5`, with at least 6 frames for short clips and a hard cap of `LOCATE_VIDEO_MAX_FRAMES=24`.
 - Scene-change candidates are detected with FFmpeg `select='gt(scene,0.35)'`, merged with uniform timestamps, de-duped within 1.5 seconds, and capped while preserving the first and last selected samples.
-- LocateAnything frame extraction uses FFmpeg timestamp extraction. Scene detection uses FFmpeg's scene filter; `-skip_frame nokey` is not used because keyframes are encoder artifacts, not semantic scene changes.
+- LocateAnything sample extraction decodes the video sequentially and writes the nearest decoded frame for each selected timestamp. This avoids brittle independent seeks on variable-frame-rate or non-standard MP4/MOV files where a timestamp near the detected tail may not produce a frame. Scene detection still uses FFmpeg's scene filter; `-skip_frame nokey` is not used because keyframes are encoder artifacts, not semantic scene changes.
 
 This gives useful temporal coverage without letting a one-minute 30 FPS clip turn into 1,800 sequential GPU calls.
 
 ## Backend Integration
 
 - `POST /api/analyze/video` allows `locate-anything` only when `ENABLE_LOCATE_ANYTHING_VIDEO=true`.
-- `backend/locate_video_processor.py` extracts sampled JPEGs, calls the existing Locate image client sequentially, records per-frame timings in Firestore metadata, stitches the annotated samples into an MP4, and returns a local video path for R2 upload.
+- `backend/locate_video_processor.py` extracts sampled JPEGs, calls the existing Locate image client sequentially, records per-frame timings in Firestore metadata, then decodes the original video and overlays the nearest sampled detections on every source frame before returning a local video path for R2 upload.
 - The existing GPU worker remains single-image and sequential for v2.0. No `/predict_batch` endpoint is required yet.
-- Sparse annotated frames are stitched with FFmpeg's concat demuxer using explicit per-frame durations derived from sample timestamp midpoints. The encoded output uses H.264, `yuv420p`, and `+faststart`, matching the browser compatibility settings used by the YOLO pipeline.
+- The final MP4 follows the YOLO delivery pattern: OpenCV writes a temporary full-frame-rate AVI, then FFmpeg encodes H.264 with `yuv420p`, `crf 23`, `preset fast`, and `+faststart` for browser playback.
 - Recommended Cloud Run GPU settings remain: L4, concurrency `1`, max instances `1`, timeout `600s`, instance-based billing, 4 vCPU/16 GiB minimum, 8 vCPU/32 GiB preferred.
 - Runtime controls:
   - `LOCATE_VIDEO_FRAME_TIMEOUT_SECONDS=180`
@@ -58,15 +58,16 @@ At current Cloud Run GPU pricing, L4 without zonal redundancy plus 4 vCPU/16 GiB
 
 ## Phasing
 
-v2.0 ships feature-flagged sampled-frame galleries, 180-second duration limit, 24-frame cap, sequential worker calls, ZIP download, Firestore progress, and session restore.
+v2.0 ships feature-flagged full-duration annotated MP4 output, 180-second duration limit, 24-frame Locate inference cap, sequential worker calls, authenticated MP4 download, Firestore progress, and session restore.
 
-v2.1 defers `/predict_batch`, batch-size 2/4 benchmarks, Cloud Tasks or Cloud Run Jobs, longer videos, query-aware keyframe ranking, optional stitched low-FPS MP4s, and tracking/interpolation between sampled frames.
+v2.1 defers `/predict_batch`, batch-size 2/4 benchmarks, Cloud Tasks or Cloud Run Jobs, longer videos, query-aware keyframe ranking, and tracking/interpolation between sampled frames.
 
 ## Sources
 
 - NVIDIA LocateAnything research page: https://research.nvidia.com/labs/lpr/locate-anything/
 - Hugging Face LocateAnything-3B model card: https://huggingface.co/nvidia/LocateAnything-3B
 - FFmpeg filters: https://ffmpeg.org/ffmpeg-filters.html
+- FFmpeg tool docs: https://ffmpeg.org/ffmpeg-doc.html
 - FFmpeg codec skip_frame docs: https://ffmpeg.org/ffmpeg-codecs.html
 - Cloud Run GPU docs: https://docs.cloud.google.com/run/docs/configuring/services/gpu
 - Cloud Run GPU best practices: https://docs.cloud.google.com/run/docs/configuring/services/gpu-best-practices

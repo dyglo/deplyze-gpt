@@ -19,6 +19,16 @@ def _jpeg_data_uri(color=(0, 0, 0)) -> str:
     return f"data:image/jpeg;base64,{base64.b64encode(buf.tobytes()).decode('utf-8')}"
 
 
+def _write_test_video(path: Path, frame_count: int = 12, fps: float = 6.0, size=(32, 24)) -> None:
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
+    assert writer.isOpened()
+    for index in range(frame_count):
+        image = np.zeros((size[1], size[0], 3), dtype=np.uint8)
+        image[:, :] = (index * 13 % 255, 80, 160)
+        writer.write(image)
+    writer.release()
+
+
 def test_uniform_sampling_uses_minimum_and_frame_cap():
     timestamps = locate_video_processor.uniform_sample_timestamps(
         duration_seconds=12,
@@ -52,14 +62,79 @@ def test_validate_video_duration_rejects_long_video():
         locate_video_processor.validate_video_duration(181, limit_seconds=180)
 
 
-def test_frame_display_durations_preserve_sparse_timeline():
+def test_detection_intervals_use_nearest_sample_boundaries():
     frames = [
         {"timestamp_seconds": 0},
         {"timestamp_seconds": 2},
         {"timestamp_seconds": 4},
     ]
 
-    assert locate_video_processor.frame_display_durations(frames, 4.2) == [1.0, 2.0, 1.2]
+    assert locate_video_processor.detection_intervals(frames, 4.2) == [
+        {"start": 0.0, "end": 1.0, "frame": frames[0]},
+        {"start": 1.0, "end": 3.0, "frame": frames[1]},
+        {"start": 3.0, "end": 4.2, "frame": frames[2]},
+    ]
+
+
+def test_extract_sample_frames_falls_back_to_last_decoded_frame_for_tail_metadata(tmp_path):
+    video_path = tmp_path / "input.mp4"
+    _write_test_video(video_path, frame_count=10, fps=10.0)
+    metadata = locate_video_processor.VideoMetadata(
+        duration_seconds=2.0,
+        fps=10.0,
+        width=32,
+        height=24,
+        frame_count=20,
+    )
+    samples = [
+        {"timestamp_seconds": 0.0, "source": "uniform"},
+        {"timestamp_seconds": 0.5, "source": "uniform"},
+        {"timestamp_seconds": 1.8, "source": "uniform"},
+    ]
+
+    frames = locate_video_processor.extract_sample_frames(video_path, samples, tmp_path / "raw", metadata)
+
+    assert len(frames) == 3
+    assert all(frame["raw_path"].exists() for frame in frames)
+    assert frames[-1]["extraction_fallback"] == "last_decoded_frame"
+
+
+def test_render_full_duration_video_preserves_source_frame_count(tmp_path):
+    video_path = tmp_path / "input.mp4"
+    _write_test_video(video_path, frame_count=12, fps=6.0)
+    metadata = locate_video_processor.VideoMetadata(
+        duration_seconds=2.0,
+        fps=6.0,
+        width=32,
+        height=24,
+        frame_count=12,
+    )
+    frames = [
+        {
+            "timestamp_seconds": 0.0,
+            "detections": [{"kind": "box", "class": "target", "bbox": [4, 4, 20, 18]}],
+        },
+        {
+            "timestamp_seconds": 1.0,
+            "detections": [{"kind": "box", "class": "target", "bbox": [8, 6, 24, 20]}],
+        },
+    ]
+
+    output_path = locate_video_processor._render_full_duration_video(
+        "job-123",
+        str(video_path),
+        frames,
+        metadata,
+        2.0,
+        tmp_path,
+    )
+    cap = cv2.VideoCapture(output_path)
+    try:
+        assert cap.isOpened()
+        assert int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) == pytest.approx(12, abs=1)
+        assert cap.get(cv2.CAP_PROP_FPS) == pytest.approx(6.0, abs=0.2)
+    finally:
+        cap.release()
 
 
 def test_process_video_locate_writes_mp4_output(monkeypatch, tmp_path):
@@ -69,15 +144,20 @@ def test_process_video_locate_writes_mp4_output(monkeypatch, tmp_path):
     video_path = tmp_path / "input.mp4"
     video_path.write_bytes(b"fake video")
 
-    def fake_extract(_video_path, _timestamp, output_path):
-        image = np.zeros((24, 32, 3), dtype=np.uint8)
-        cv2.imwrite(str(output_path), image)
+    def fake_extract(_video_path, samples, raw_dir, _metadata):
+        raw_frames = []
+        for index, sample in enumerate(samples, start=1):
+            raw_path = raw_dir / f"source_{index:04d}.jpg"
+            image = np.zeros((24, 32, 3), dtype=np.uint8)
+            cv2.imwrite(str(raw_path), image)
+            raw_frames.append({**sample, "index": index, "raw_path": raw_path, "extracted_timestamp_seconds": sample["timestamp_seconds"]})
+        return raw_frames
 
-    def fake_stitch(_job_id, frames, _duration_seconds, outputs_dir):
+    def fake_render(_job_id, _video_path, frames, _metadata, _duration_seconds, outputs_dir, _progress_callback=None):
         output_path = outputs_dir / "job-123.mp4"
         output_path.write_bytes(b"fake mp4")
         for frame in frames:
-            assert Path(frame["path"]).exists()
+            assert frame["detections"]
         return str(output_path)
 
     calls = []
@@ -94,10 +174,14 @@ def test_process_video_locate_writes_mp4_output(monkeypatch, tmp_path):
             "model": "nvidia/LocateAnything-3B",
         }
 
-    monkeypatch.setattr(locate_video_processor, "_get_video_duration_seconds", lambda _path: 12)
+    monkeypatch.setattr(
+        locate_video_processor,
+        "get_video_metadata",
+        lambda _path: locate_video_processor.VideoMetadata(12.0, 6.0, 32, 24, 72),
+    )
     monkeypatch.setattr(locate_video_processor, "scene_change_timestamps", lambda *_args, **_kwargs: [4.9, 8.1])
-    monkeypatch.setattr(locate_video_processor, "_extract_frame_at_timestamp", fake_extract)
-    monkeypatch.setattr(locate_video_processor, "_stitch_annotated_frames", fake_stitch)
+    monkeypatch.setattr(locate_video_processor, "extract_sample_frames", fake_extract)
+    monkeypatch.setattr(locate_video_processor, "_render_full_duration_video", fake_render)
     monkeypatch.setattr(locate_video_processor, "analyze_image_locate", fake_analyze)
 
     progress = []
