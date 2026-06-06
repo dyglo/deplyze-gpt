@@ -248,6 +248,14 @@ jobs:
               "GOOGLE_CLOUD_LOCATION": os.environ["VERTEX_AI_LOCATION"],
               "GCLOUD_PROJECT": "vision-sys",
               "CORS_ORIGINS": "https://vision-sys.web.app,https://vision-sys.firebaseapp.com,https://deplyzegpt.xyz",
+              "ENABLE_LOCATE_ANYTHING": "true",
+              "LOCATE_ENDPOINT_URL": "https://deplyzegpt-locateanything-eespme2hdq-ew.a.run.app",
+              "LOCATE_ENDPOINT_AUDIENCE": "https://deplyzegpt-locateanything-eespme2hdq-ew.a.run.app",
+              "LOCATE_GENERATION_MODE": "hybrid",
+              "LOCATE_TIMEOUT_SECONDS": "600",
+              "LOCATE_MAX_NEW_TOKENS": "8192",
+              "LOCATE_MAX_REQUEST_SIDE": "1024",
+              "LOCATE_RETRY_DELAY_SECONDS": "5",
           }
 
           Path("cloud-run-env.yaml").write_text(
@@ -395,6 +403,7 @@ jobs:
           REACT_APP_FIREBASE_APP_ID: ${{ secrets.REACT_APP_FIREBASE_APP_ID }}
           REACT_APP_FIREBASE_MEASUREMENT_ID: ${{ secrets.REACT_APP_FIREBASE_MEASUREMENT_ID }}
           REACT_APP_BACKEND_URL: https://deplyzegpt-api-eespme2hdq-ew.a.run.app
+          REACT_APP_ENABLE_LOCATE_ANYTHING: true
         run: npm run build
 
       - name: Deploy Firebase Hosting

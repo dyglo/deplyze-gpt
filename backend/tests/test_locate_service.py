@@ -10,6 +10,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import locate_service
 
 
+class _LocateResponse:
+    def __init__(self, status_code, text="", data=None):
+        self.status_code = status_code
+        self.text = text
+        self._data = data
+
+    def json(self):
+        if self._data is None:
+            raise ValueError("No JSON")
+        return self._data
+
+
 def test_parse_locate_output_scales_and_clamps_boxes_and_points():
     detections = locate_service.parse_locate_output(
         "red shirt <box><100><200><900><1100></box> signal <box><500><250></box>",
@@ -72,3 +84,36 @@ def test_analyze_image_locate_returns_existing_image_result_shape(monkeypatch, t
     ]
     encoded = result["content"].split(",", 1)[1]
     assert base64.b64decode(encoded)
+
+
+def test_call_locate_endpoint_retries_cloud_run_cold_start(monkeypatch):
+    monkeypatch.setenv("ENABLE_LOCATE_ANYTHING", "true")
+    monkeypatch.setenv("LOCATE_ENDPOINT_URL", "https://locate-worker.example")
+    monkeypatch.setenv("LOCATE_TIMEOUT_SECONDS", "60")
+    monkeypatch.setenv("LOCATE_RETRY_DELAY_SECONDS", "1")
+    monkeypatch.delenv("LOCATE_ENDPOINT_AUDIENCE", raising=False)
+    monkeypatch.delenv("LOCATE_BEARER_TOKEN", raising=False)
+    monkeypatch.setattr(locate_service.time, "sleep", lambda _seconds: None)
+
+    calls = []
+
+    def fake_post(*args, **kwargs):
+        calls.append((args, kwargs))
+        if len(calls) == 1:
+            return _LocateResponse(429, "Rate exceeded.")
+        return _LocateResponse(200, data={"answer": "<box><100><100><900><900></box>"})
+
+    monkeypatch.setattr(locate_service.requests, "post", fake_post)
+
+    result = locate_service._call_locate_endpoint(
+        image_b64="abc",
+        prompt="locate the person",
+        generation_mode="hybrid",
+        max_new_tokens=256,
+    )
+
+    assert result == {"answer": "<box><100><100><900><900></box>"}
+    assert len(calls) == 2
+    assert calls[0][0] == ("https://locate-worker.example/predict",)
+    assert calls[0][1]["timeout"] > 0
+    assert calls[1][1]["timeout"] > 0
