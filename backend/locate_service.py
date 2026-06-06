@@ -53,6 +53,7 @@ POINT_COMMA_RE = re.compile(
     r"<box>\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*</box>",
     re.IGNORECASE,
 )
+REF_TOKEN_RE = re.compile(r"<ref>\s*(.*?)\s*</ref>", re.IGNORECASE | re.DOTALL)
 
 
 class LocateServiceError(RuntimeError):
@@ -268,11 +269,34 @@ def _call_locate_endpoint(
 
 def _clean_label(prompt: str, max_len: int = 72) -> str:
     label = re.sub(r"\s+", " ", (prompt or "").strip())
-    label = re.sub(r"^(locate|find|detect|show|point to|ground)\s+", "", label, flags=re.IGNORECASE)
+    label = label.replace("</c>", ", ")
+    label = re.sub(r"\s+", " ", label).strip()
+    label = re.sub(r"^(point\s+to|locate|find|detect|show|ground)\s+", "", label, flags=re.IGNORECASE)
+
+    prefix_re = re.compile(
+        r"^(?:"
+        r"all\s+(?:the\s+)?instances\s+(?:of|that\s+match(?:es)?\s+the\s+following\s+description:)"
+        r"|a\s+single\s+instance\s+that\s+match(?:es)?\s+the\s+following\s+description:"
+        r"|the\s+region\s+that\s+matches\s+the\s+following\s+description:"
+        r"|the\s+text\s+referred\s+as"
+        r")\s*",
+        re.IGNORECASE,
+    )
+    previous = None
+    while label and label != previous:
+        previous = label
+        label = prefix_re.sub("", label, count=1).strip()
+
     label = label.strip(" .:")
     if not label:
         return "target"
     return label[:max_len].rstrip()
+
+
+def _clean_detection_label(value: str, fallback: str) -> str:
+    label = re.sub(r"<[^>]+>", " ", value or "")
+    label = _clean_label(label)
+    return label if label != "target" else fallback
 
 
 def _clamp_norm(value: float) -> float:
@@ -297,8 +321,28 @@ def _iter_point_matches(answer: str):
     yield from POINT_COMMA_RE.finditer(answer or "")
 
 
+def _ref_labels_by_position(answer: str, fallback_label: str) -> list[tuple[int, str]]:
+    refs: list[tuple[int, str]] = []
+    for match in REF_TOKEN_RE.finditer(answer or ""):
+        label = _clean_detection_label(match.group(1), fallback_label)
+        if label:
+            refs.append((match.end(), label))
+    return refs
+
+
+def _label_for_match(match: re.Match, refs: list[tuple[int, str]], fallback_label: str) -> str:
+    label = fallback_label
+    for ref_end, ref_label in refs:
+        if ref_end > match.start():
+            break
+        label = ref_label
+    return label
+
+
 def parse_locate_output(answer: str, image_width: int, image_height: int, label: str = "target") -> list[dict]:
     detections: list[LocateDetection] = []
+    fallback_label = _clean_label(label)
+    refs = _ref_labels_by_position(answer or "", fallback_label)
 
     for match in _iter_box_matches(answer):
         x1_raw, y1_raw, x2_raw, y2_raw = [float(value) for value in match.groups()]
@@ -306,11 +350,17 @@ def parse_locate_output(answer: str, image_width: int, image_height: int, label:
         y1, y2 = sorted([_scale_y(y1_raw, image_height), _scale_y(y2_raw, image_height)])
         if x2 <= x1 or y2 <= y1:
             continue
-        detections.append(LocateDetection("box", label, [x1, y1, x2, y2]))
+        detections.append(LocateDetection("box", _label_for_match(match, refs, fallback_label), [x1, y1, x2, y2]))
 
     for match in _iter_point_matches(answer):
         x_raw, y_raw = [float(value) for value in match.groups()]
-        detections.append(LocateDetection("point", label, [_scale_x(x_raw, image_width), _scale_y(y_raw, image_height)]))
+        detections.append(
+            LocateDetection(
+                "point",
+                _label_for_match(match, refs, fallback_label),
+                [_scale_x(x_raw, image_width), _scale_y(y_raw, image_height)],
+            )
+        )
 
     return [detection.as_message_detection() for detection in detections]
 

@@ -1,5 +1,6 @@
 import React, { useRef, useEffect } from "react";
 import { Download, Film, AlertCircle, Loader2 } from "lucide-react";
+import { normalizeSuggestionText } from "../suggestionUtils";
 
 const MODEL_LABELS = {
   gemini: "Gemini 3 Flash",
@@ -55,19 +56,22 @@ function SuggestionChips({ suggestions, onSuggestionClick }) {
   if (!suggestions?.length) return null;
   return (
     <div className="mt-3 flex flex-wrap gap-2">
-      {suggestions.map((s, i) => (
-        <button
-          key={i}
-          data-testid="suggestion-chip"
-          onClick={() => onSuggestionClick(s)}
-          className="text-[13px] px-3 py-1.5 rounded-full transition-colors"
-          style={{ background: "var(--bg-elevated)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}
-          onMouseEnter={e => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text-primary)"; }}
-          onMouseLeave={e => { e.currentTarget.style.background = "var(--bg-elevated)"; e.currentTarget.style.color = "var(--text-secondary)"; }}
-        >
-          {s}
-        </button>
-      ))}
+      {suggestions.map((s, i) => {
+        const suggestion = normalizeSuggestionText(s);
+        return (
+          <button
+            key={`${suggestion}-${i}`}
+            data-testid="suggestion-chip"
+            onClick={() => onSuggestionClick(suggestion)}
+            className="text-[13px] px-3 py-1.5 rounded-full transition-colors"
+            style={{ background: "var(--bg-elevated)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text-primary)"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "var(--bg-elevated)"; e.currentTarget.style.color = "var(--text-secondary)"; }}
+          >
+            {suggestion}
+          </button>
+        );
+      })}
     </div>
   );
 }
