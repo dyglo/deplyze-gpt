@@ -1,13 +1,10 @@
 import base64
-import json
 import logging
 import math
 import os
 import re
 import subprocess
 import time
-import zipfile
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -25,6 +22,8 @@ DEFAULT_SCENE_THRESHOLD = 0.35
 DEFAULT_MIN_GAP_SECONDS = 1.5
 DEFAULT_FRAME_TIMEOUT_SECONDS = 180
 DEFAULT_JOB_TIMEOUT_SECONDS = 1800
+DEFAULT_OUTPUT_FPS = 24
+MIN_FRAME_HOLD_SECONDS = 0.25
 
 SHOWINFO_PTS_RE = re.compile(r"pts_time:([0-9]+(?:\.[0-9]+)?)")
 
@@ -77,6 +76,10 @@ def frame_timeout_seconds() -> int:
 
 def job_timeout_seconds() -> int:
     return _env_int("LOCATE_VIDEO_JOB_TIMEOUT_SECONDS", DEFAULT_JOB_TIMEOUT_SECONDS, minimum=120)
+
+
+def output_fps() -> int:
+    return _env_int("LOCATE_VIDEO_OUTPUT_FPS", DEFAULT_OUTPUT_FPS, minimum=1)
 
 
 def _get_video_duration_seconds(video_path: str) -> float:
@@ -277,6 +280,91 @@ def _public_frame(frame: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in frame.items() if key not in {"path"}}
 
 
+def _concat_file_path(path: str) -> str:
+    # FFmpeg concat scripts use single-quoted paths; embedded quotes must be escaped.
+    return Path(path).resolve().as_posix().replace("'", r"'\''")
+
+
+def frame_display_durations(frames: list[dict[str, Any]], duration_seconds: float) -> list[float]:
+    if not frames:
+        return []
+    if len(frames) == 1:
+        return [max(MIN_FRAME_HOLD_SECONDS, duration_seconds)]
+
+    timestamps = [float(frame["timestamp_seconds"]) for frame in frames]
+    boundaries = [0.0]
+    for previous, current in zip(timestamps, timestamps[1:]):
+        boundaries.append(max(boundaries[-1], (previous + current) / 2.0))
+    boundaries.append(max(boundaries[-1] + MIN_FRAME_HOLD_SECONDS, duration_seconds))
+
+    durations = []
+    for start, end in zip(boundaries, boundaries[1:]):
+        durations.append(round(max(MIN_FRAME_HOLD_SECONDS, end - start), 3))
+    return durations
+
+
+def _stitch_annotated_frames(
+    job_id: str,
+    frames: list[dict[str, Any]],
+    duration_seconds: float,
+    outputs_dir: Path,
+) -> str:
+    if not frames:
+        raise LocateVideoError("No annotated frames were produced for LocateAnything video output.")
+
+    concat_path = outputs_dir / f"{job_id}_frames.ffconcat"
+    final_path = outputs_dir / f"{job_id}.mp4"
+    durations = frame_display_durations(frames, duration_seconds)
+
+    lines = ["ffconcat version 1.0"]
+    for frame, display_duration in zip(frames, durations):
+        lines.append(f"file '{_concat_file_path(frame['path'])}'")
+        lines.append(f"duration {display_duration:.3f}")
+    lines.append(f"file '{_concat_file_path(frames[-1]['path'])}'")
+    concat_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(concat_path),
+        "-vf",
+        f"fps={output_fps()},scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
+        "-vcodec",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-crf",
+        "23",
+        "-preset",
+        "fast",
+        "-movflags",
+        "+faststart",
+        "-an",
+        str(final_path),
+    ]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=max(300, int(duration_seconds * 10)),
+    )
+    if result.returncode != 0:
+        raise LocateVideoError(f"FFmpeg video stitching failed: {result.stderr[-300:]}", status_code=500)
+    if not final_path.exists() or final_path.stat().st_size <= 0:
+        raise LocateVideoError("FFmpeg did not produce a LocateAnything MP4 output.", status_code=500)
+
+    concat_path.unlink(missing_ok=True)
+    return str(final_path)
+
+
 def _update(progress_callback: Optional[Callable[[dict[str, Any]], None]], updates: dict[str, Any]) -> None:
     if not progress_callback:
         return
@@ -299,6 +387,7 @@ def process_video_locate(
 
     _update(progress_callback, {"status": "processing", "phase": "sampling", "progress": 3})
     samples, sampling = build_frame_samples(video_path)
+    duration_seconds = float(sampling["duration_seconds"])
     total = len(samples)
     _update(
         progress_callback,
@@ -363,30 +452,13 @@ def process_video_locate(
             },
         )
 
-    _update(progress_callback, {"phase": "packaging", "progress": 92})
-    manifest = {
-        "job_id": job_id,
-        "type": "frame_gallery",
-        "prompt": prompt,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "sampling": sampling,
-        "frames": [_public_frame(frame) for frame in frames],
-    }
-    manifest_path = outputs_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-
-    zip_path = outputs_dir / "output.zip"
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.write(manifest_path, "manifest.json")
-        for frame in frames:
-            archive.write(frame["path"], frame["filename"])
+    _update(progress_callback, {"phase": "stitching", "progress": 92})
+    output_path = _stitch_annotated_frames(job_id, frames, duration_seconds, outputs_dir)
 
     _update(progress_callback, {"phase": "uploading", "progress": 95})
     return {
-        "type": "frame_gallery",
-        "frames": frames,
-        "manifest": manifest,
-        "manifest_path": str(manifest_path),
-        "zip_path": str(zip_path),
+        "type": "video",
+        "frames": [_public_frame(frame) for frame in frames],
+        "output_path": output_path,
         "sampling": sampling,
     }

@@ -1,7 +1,5 @@
 import base64
-import json
 import sys
-import zipfile
 from pathlib import Path
 
 import cv2
@@ -54,7 +52,17 @@ def test_validate_video_duration_rejects_long_video():
         locate_video_processor.validate_video_duration(181, limit_seconds=180)
 
 
-def test_process_video_locate_writes_manifest_and_zip(monkeypatch, tmp_path):
+def test_frame_display_durations_preserve_sparse_timeline():
+    frames = [
+        {"timestamp_seconds": 0},
+        {"timestamp_seconds": 2},
+        {"timestamp_seconds": 4},
+    ]
+
+    assert locate_video_processor.frame_display_durations(frames, 4.2) == [1.0, 2.0, 1.2]
+
+
+def test_process_video_locate_writes_mp4_output(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCATE_VIDEO_MAX_FRAMES", "3")
     monkeypatch.setenv("LOCATE_VIDEO_FRAME_TIMEOUT_SECONDS", "180")
 
@@ -64,6 +72,13 @@ def test_process_video_locate_writes_manifest_and_zip(monkeypatch, tmp_path):
     def fake_extract(_video_path, _timestamp, output_path):
         image = np.zeros((24, 32, 3), dtype=np.uint8)
         cv2.imwrite(str(output_path), image)
+
+    def fake_stitch(_job_id, frames, _duration_seconds, outputs_dir):
+        output_path = outputs_dir / "job-123.mp4"
+        output_path.write_bytes(b"fake mp4")
+        for frame in frames:
+            assert Path(frame["path"]).exists()
+        return str(output_path)
 
     calls = []
 
@@ -82,6 +97,7 @@ def test_process_video_locate_writes_manifest_and_zip(monkeypatch, tmp_path):
     monkeypatch.setattr(locate_video_processor, "_get_video_duration_seconds", lambda _path: 12)
     monkeypatch.setattr(locate_video_processor, "scene_change_timestamps", lambda *_args, **_kwargs: [4.9, 8.1])
     monkeypatch.setattr(locate_video_processor, "_extract_frame_at_timestamp", fake_extract)
+    monkeypatch.setattr(locate_video_processor, "_stitch_annotated_frames", fake_stitch)
     monkeypatch.setattr(locate_video_processor, "analyze_image_locate", fake_analyze)
 
     progress = []
@@ -93,20 +109,14 @@ def test_process_video_locate_writes_manifest_and_zip(monkeypatch, tmp_path):
         progress.append,
     )
 
-    assert result["type"] == "frame_gallery"
+    assert result["type"] == "video"
     assert len(result["frames"]) == 3
+    assert result["output_path"].endswith(".mp4")
+    assert Path(result["output_path"]).read_bytes() == b"fake mp4"
     assert len(calls) == 3
     assert all(call[1] == "locate people" for call in calls)
     assert all(call[2] == 180 for call in calls)
 
-    manifest = json.loads(Path(result["manifest_path"]).read_text(encoding="utf-8"))
-    assert manifest["type"] == "frame_gallery"
-    assert manifest["sampling"]["selected_count"] == 3
-    assert "path" not in manifest["frames"][0]
-    assert manifest["frames"][0]["timings"]["total_seconds"] == 1.23
-
-    with zipfile.ZipFile(result["zip_path"]) as archive:
-        assert "manifest.json" in archive.namelist()
-        assert "frame_0001.jpg" in archive.namelist()
-
+    assert result["frames"][0]["timings"]["total_seconds"] == 1.23
+    assert "path" not in result["frames"][0]
     assert progress[-1]["phase"] == "uploading"

@@ -4,7 +4,7 @@
 
 LocateAnything video analysis ships as sampled-frame grounding, not full-frame video rendering. The YOLO video path still produces an annotated MP4 through `backend/video_processor.py`; LocateAnything uses `backend/locate_video_processor.py` because a 3B VLM cannot run economically on every video frame.
 
-The v2.0 workflow keeps the existing async job shape: upload to R2, create a Firestore job, queue a FastAPI background task, update `jobs/{uid}/items/{job_id}`, and let the frontend listen for progress. The completed artifact is a frame gallery plus `manifest.json` packaged as `output.zip`.
+The v2.0 workflow keeps the existing async job shape: upload to R2, create a Firestore job, queue a FastAPI background task, update `jobs/{uid}/items/{job_id}`, and let the frontend listen for progress. The completed artifact is a browser-compatible annotated MP4, matching the YOLO video delivery contract.
 
 ## Frame Sampling Strategy
 
@@ -18,8 +18,9 @@ This gives useful temporal coverage without letting a one-minute 30 FPS clip tur
 ## Backend Integration
 
 - `POST /api/analyze/video` allows `locate-anything` only when `ENABLE_LOCATE_ANYTHING_VIDEO=true`.
-- `backend/locate_video_processor.py` extracts sampled JPEGs, calls the existing Locate image client sequentially, records per-frame timings, writes annotated frames, writes `manifest.json`, and packages `output.zip`.
+- `backend/locate_video_processor.py` extracts sampled JPEGs, calls the existing Locate image client sequentially, records per-frame timings in Firestore metadata, stitches the annotated samples into an MP4, and returns a local video path for R2 upload.
 - The existing GPU worker remains single-image and sequential for v2.0. No `/predict_batch` endpoint is required yet.
+- Sparse annotated frames are stitched with FFmpeg's concat demuxer using explicit per-frame durations derived from sample timestamp midpoints. The encoded output uses H.264, `yuv420p`, and `+faststart`, matching the browser compatibility settings used by the YOLO pipeline.
 - Recommended Cloud Run GPU settings remain: L4, concurrency `1`, max instances `1`, timeout `600s`, instance-based billing, 4 vCPU/16 GiB minimum, 8 vCPU/32 GiB preferred.
 - Runtime controls:
   - `LOCATE_VIDEO_FRAME_TIMEOUT_SECONDS=180`
@@ -33,26 +34,23 @@ This gives useful temporal coverage without letting a one-minute 30 FPS clip tur
 R2 output layout:
 
 ```text
-outputs/{uid}/{session_id}/{job_id}/frame_0001.jpg
-outputs/{uid}/{session_id}/{job_id}/frame_0002.jpg
-outputs/{uid}/{session_id}/{job_id}/manifest.json
-outputs/{uid}/{session_id}/{job_id}/output.zip
+outputs/{uid}/{session_id}/{job_id}/output.mp4
 ```
 
-Job documents can include optional fields: `phase`, `frame_total`, `frame_completed`, `sampling`, `frames`, `manifest_key`, and `output_key`. Firestore stores R2 keys only. API responses add fresh presigned frame URLs through `GET /api/analyze/video/status/{job_id}` and session restore.
+Job documents can include optional fields: `phase`, `frame_total`, `frame_completed`, `sampling`, `frames`, and `output_key`. Firestore stores R2 keys only. `output_key` points to `output.mp4`.
 
-Assistant messages use `output_type: "frame_gallery"` with `frames` metadata and `output_r2_path` pointing to `output.zip`.
+Assistant messages use `output_type: "video"` with `output_r2_path` pointing to `output.mp4`, so restored sessions use the same video player and download path as YOLO.
 
 ## Frontend Behavior
 
 - `REACT_APP_ENABLE_LOCATE_ANYTHING_VIDEO=true` allows the Locate model for video attachments.
-- Progress shows phases: queued, extracting sampled frames, analyzing frame `n/N`, packaging, and uploading.
-- Completed results render as a timestamped annotated-frame gallery.
-- The download button fetches the authenticated API ZIP download URL; the browser never fetches raw R2 URLs directly.
+- Progress shows phases: queued, extracting sampled frames, analyzing frame `n/N`, stitching, and uploading.
+- Completed results render in the existing chat video player.
+- The download button fetches the authenticated API MP4 download URL; the browser never fetches raw R2 URLs directly.
 
 ## Timing And Cost
 
-Public LocateAnything throughput is reported as 12.7 boxes/sec on a single H100 with batch size 1, not L4 frame/sec. v2.0 records actual `timings.total_seconds` per frame in the manifest before making stronger latency promises.
+Public LocateAnything throughput is reported as 12.7 boxes/sec on a single H100 with batch size 1, not L4 frame/sec. v2.0 records actual `timings.total_seconds` per frame in Firestore job metadata before making stronger latency promises.
 
 Planning estimate on L4 is 4-10 seconds per sampled frame when warm. At roughly 12 sampled frames per minute of video, expected processing is 48-120 seconds per video minute, plus 60-180 seconds cold start if min instances is 0.
 
