@@ -80,13 +80,6 @@ function downloadKeyFor(kind, jobId, source) {
   return `${kind}:${jobId || source || "output"}`;
 }
 
-function formatTimestamp(seconds = 0) {
-  const total = Math.max(0, Math.floor(Number(seconds) || 0));
-  const minutes = Math.floor(total / 60);
-  const remaining = String(total % 60).padStart(2, "0");
-  return `${minutes}:${remaining}`;
-}
-
 function videoProgressLabel(videoJob) {
   if (videoJob?.model !== "locate-anything") {
     return videoJob.status === "queued" ? "Video queued for processing..." : `Processing - ${videoJob.progress}%`;
@@ -98,18 +91,9 @@ function videoProgressLabel(videoJob) {
 
   if (videoJob.phase === "extracting") return "Extracting sampled frames...";
   if (videoJob.phase === "analyzing" && total) return `Analyzing frame ${completed}/${total} - ${videoJob.progress}%`;
-  if (videoJob.phase === "packaging" || videoJob.phase === "uploading") return "Packaging frame gallery...";
+  if (videoJob.phase === "stitching") return "Stitching annotated video...";
+  if (videoJob.phase === "uploading") return "Uploading annotated video...";
   return `Processing sampled frames - ${videoJob.progress}%`;
-}
-
-function frameDetectionCounts(frames = []) {
-  return frames.reduce((counts, frame) => {
-    (frame.detections || []).forEach((detection) => {
-      const label = detection.class || "target";
-      counts[label] = (counts[label] || 0) + 1;
-    });
-    return counts;
-  }, {});
 }
 
 function Avatar() {
@@ -279,103 +263,6 @@ function AssistantMessage({ message, onSuggestionClick, onDownload, onDownloadIm
                 </span>
               ))}
             </div>
-          )}
-          <SuggestionChips suggestions={result.suggestions} onSuggestionClick={onSuggestionClick} />
-        </div>
-      </div>
-    );
-  }
-
-  if (result?.type === "frame_gallery") {
-    const frames = result.frames || [];
-    const counts = frameDetectionCounts(frames);
-    const totalDetections = Object.values(counts).reduce((sum, count) => sum + count, 0);
-    const downloadKey = downloadKeyFor("gallery", result.job_id, result.download_url || result.content);
-    const downloadState = downloadStatus?.[downloadKey] || {};
-    return (
-      <div data-testid="assistant-frame-gallery-result" className="flex gap-3 mb-6">
-        <Avatar />
-        <div style={{ maxWidth: "min(720px, 94%)" }}>
-          <p className="text-xs mb-1.5" style={{ color: "var(--text-faint)" }}>{MODEL_LABELS[model] || model}</p>
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <div>
-              <p className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>
-                Sampled frame gallery
-              </p>
-              <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
-                {frames.length} frame{frames.length === 1 ? "" : "s"} analyzed
-              </p>
-            </div>
-            <button
-              data-testid="download-frame-gallery-button"
-              type="button"
-              onClick={() => onDownload(result.content, result.job_id, downloadKey, result.download_url)}
-              disabled={downloadState.isLoading}
-              aria-busy={downloadState.isLoading ? "true" : "false"}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors flex-shrink-0"
-              style={{
-                background: downloadState.isLoading ? "var(--accent-hover)" : "var(--accent)",
-                color: "#fff",
-                cursor: downloadState.isLoading ? "progress" : "pointer",
-                opacity: downloadState.isLoading ? 0.85 : 1,
-              }}
-              onMouseEnter={e => { if (!downloadState.isLoading) e.currentTarget.style.background = "var(--accent-hover)"; }}
-              onMouseLeave={e => { if (!downloadState.isLoading) e.currentTarget.style.background = "var(--accent)"; }}
-            >
-              {downloadState.isLoading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-              {downloadState.isLoading ? "Downloading..." : "Download ZIP"}
-            </button>
-          </div>
-
-          <div
-            className="grid gap-2"
-            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}
-          >
-            {frames.map((frame) => (
-              <div
-                key={`${frame.index}-${frame.timestamp_seconds}`}
-                className="overflow-hidden rounded-lg"
-                style={{ background: "var(--bg-elevated)", border: "1px solid var(--border-subtle)" }}
-              >
-                {frame.url ? (
-                  <img
-                    src={frame.url}
-                    alt={`Annotated frame at ${formatTimestamp(frame.timestamp_seconds)}`}
-                    className="w-full aspect-video object-cover"
-                    style={{ display: "block" }}
-                  />
-                ) : (
-                  <div className="w-full aspect-video flex items-center justify-center" style={{ color: "var(--text-muted)" }}>
-                    <Film size={18} />
-                  </div>
-                )}
-                <div className="px-2 py-1.5 flex items-center justify-between gap-2">
-                  <span className="text-[12px] tabular-nums" style={{ color: "var(--accent)" }}>
-                    {formatTimestamp(frame.timestamp_seconds)}
-                  </span>
-                  <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-                    {(frame.detections || []).length} hit{(frame.detections || []).length === 1 ? "" : "s"}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {totalDetections > 0 && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <span className="text-[13px] font-medium" style={{ color: "var(--accent)" }}>{totalDetections} detected:</span>
-              {Object.entries(counts).slice(0, 6).map(([cls, cnt]) => (
-                <span key={cls} className="text-xs px-2 py-0.5 rounded-full"
-                  style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)", border: "1px solid var(--border-subtle)" }}>
-                  {cls}{cnt > 1 ? ` x${cnt}` : ""}
-                </span>
-              ))}
-            </div>
-          )}
-          {downloadState.error && (
-            <p data-testid="download-frame-gallery-error" className="mt-1.5 text-[13px]" style={{ color: "#e06a5a" }}>
-              {downloadState.error}
-            </p>
           )}
           <SuggestionChips suggestions={result.suggestions} onSuggestionClick={onSuggestionClick} />
         </div>

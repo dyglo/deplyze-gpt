@@ -6,7 +6,6 @@ import os
 import uuid
 import asyncio
 import base64
-import json
 import logging
 import tempfile
 from pathlib import Path
@@ -879,20 +878,6 @@ async def analyze_video_gemini_route(request: Request, payload: VideoGeminiReque
             raise HTTPException(500, "Analysis failed. Please try again.")
 
 
-def _locate_frame_for_firestore(frame: dict, r2_path: str) -> dict:
-    return {
-        "index": frame.get("index"),
-        "filename": frame.get("filename"),
-        "timestamp_seconds": frame.get("timestamp_seconds"),
-        "source": frame.get("source"),
-        "detections": frame.get("detections") or [],
-        "generation_mode": frame.get("generation_mode"),
-        "model": frame.get("model"),
-        "timings": frame.get("timings") or {},
-        "r2_path": r2_path,
-    }
-
-
 async def _run_locate_video_job(uid: str, session_id: str, job_id: str, prompt: str):
     with tempfile.TemporaryDirectory(prefix="deplyzegpt-locate-video-") as tmp:
         work_dir = Path(tmp)
@@ -920,30 +905,9 @@ async def _run_locate_video_job(uid: str, session_id: str, job_id: str, prompt: 
                 timeout=locate_video_processor.job_timeout_seconds(),
             )
 
-            frames_for_firestore = []
-            manifest_frames = []
-            for frame in result.get("frames", []):
-                filename = frame.get("filename") or f"frame_{len(frames_for_firestore) + 1:04d}.jpg"
-                frame_key = _storage_key(uid, session_id, job_id, "outputs", filename)
-                upload_file(frame_key, Path(frame["path"]), "image/jpeg")
-                frame_data = _locate_frame_for_firestore(frame, frame_key)
-                frames_for_firestore.append(frame_data)
-                manifest_frame = {key: value for key, value in frame.items() if key != "path"}
-                manifest_frame["r2_path"] = frame_key
-                manifest_frames.append(manifest_frame)
-
-            manifest = dict(result.get("manifest") or {})
-            manifest["frames"] = manifest_frames
-            manifest["output_format"] = "frame_gallery_zip"
-            manifest_key = _storage_key(uid, session_id, job_id, "outputs", "manifest.json")
-            upload_bytes(
-                manifest_key,
-                json.dumps(manifest, indent=2).encode("utf-8"),
-                "application/json",
-            )
-
-            zip_key = _storage_key(uid, session_id, job_id, "outputs", "output.zip")
-            upload_file(zip_key, Path(result["zip_path"]), "application/zip")
+            output_key = _storage_key(uid, session_id, job_id, "outputs", "output.mp4")
+            upload_file(output_key, Path(result["output_path"]), "video/mp4")
+            frames_for_firestore = result.get("frames", [])
 
             update_job(
                 uid,
@@ -956,9 +920,9 @@ async def _run_locate_video_job(uid: str, session_id: str, job_id: str, prompt: 
                     "frame_completed": len(frames_for_firestore),
                     "sampling": result.get("sampling") or {},
                     "frames": frames_for_firestore,
-                    "manifest_key": manifest_key,
-                    "output_key": zip_key,
-                    "output_r2_path": zip_key,
+                    "manifest_key": None,
+                    "output_key": output_key,
+                    "output_r2_path": output_key,
                     "output_url": None,
                     "error": None,
                 },
@@ -968,14 +932,13 @@ async def _run_locate_video_job(uid: str, session_id: str, job_id: str, prompt: 
                 session_id,
                 {
                     "role": "assistant",
-                    "content": "LocateAnything frame gallery is ready.",
-                    "output_type": "frame_gallery",
-                    "output_r2_path": zip_key,
-                    "manifest_r2_path": manifest_key,
+                    "content": "Processed video is ready.",
+                    "output_type": "video",
+                    "output_r2_path": output_key,
                     "job_id": job_id,
                     "model": LOCATE_MODEL_TYPE,
                     "frames": frames_for_firestore,
-                    "suggestions": ["Refine the target prompt", "Describe this video with Gemini", "Download frame gallery"],
+                    "suggestions": ["Refine the target prompt", "Describe this video with Gemini", "Download result"],
                 },
             )
         except asyncio.TimeoutError:

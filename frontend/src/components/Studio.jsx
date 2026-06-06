@@ -99,9 +99,6 @@ function downloadKeyFor(kind, jobId, source) {
 }
 
 function filenameForBlob(kind, blob) {
-  if (blob.type === "application/zip" || blob.type === "application/x-zip-compressed") {
-    return "deplyzegpt_frame_gallery.zip";
-  }
   if (kind === "video") return "deplyzegpt_output.mp4";
   const extensionByType = {
     "image/png": "png",
@@ -267,29 +264,7 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
         const data = snapshot.data();
         updateMessage(assistId, { videoJob: data });
 
-        if (data.status === "done" && data.model === "locate-anything") {
-          const response = await axios.get(`${API}/analyze/video/status/${jobId}`, {
-            headers: await authHeaders(),
-          });
-          const status = response.data || data;
-          stopJobListener();
-          setIsAnalyzing(false);
-          updateMessage(assistId, {
-            isLoading: false,
-            videoJob: status,
-            result: {
-              type: "frame_gallery",
-              content: status.output_url,
-              download_url: status.output_download_url || `${API}/files/download/${jobId}`,
-              manifest_url: status.manifest_url,
-              job_id: jobId,
-              frames: status.frames || [],
-              detections: [],
-              suggestions: ["Refine the target prompt", "Describe this video with Gemini", "Download frame gallery"],
-            },
-          });
-          loadSessions().catch(() => {});
-        } else if (data.status === "done" && (data.output_url || data.output_key || data.output_r2_path)) {
+        if (data.status === "done" && (data.output_url || data.output_key || data.output_r2_path)) {
           let videoUrl = data.output_url;
           if (!videoUrl) {
             const response = await axios.get(`${API}/files/presign/${jobId}`, {
@@ -308,7 +283,9 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
               download_url: `${API}/files/download/${jobId}`,
               job_id: jobId,
               detections: [],
-              suggestions: ["Analyze frames with Gemini", "Run segmentation", "Download result"],
+              suggestions: data.model === "locate-anything"
+                ? ["Refine the target prompt", "Describe this video with Gemini", "Download result"]
+                : ["Analyze frames with Gemini", "Run segmentation", "Download result"],
             } : null,
           });
           loadSessions().catch(() => {});
