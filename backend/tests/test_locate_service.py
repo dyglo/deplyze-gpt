@@ -22,6 +22,43 @@ class _LocateResponse:
         return self._data
 
 
+def test_parse_locate_output_uses_per_detection_ref_labels():
+    detections = locate_service.parse_locate_output(
+        (
+            "<ref>banana</ref><box><100><200><400><700></box>"
+            "<ref>orange</ref><box><500><250><900><800></box>"
+        ),
+        image_width=200,
+        image_height=100,
+        label="all instances of fruit",
+    )
+
+    assert detections == [
+        {"kind": "box", "class": "banana", "bbox": [20.0, 20.0, 80.0, 70.0]},
+        {"kind": "box", "class": "orange", "bbox": [100.0, 25.0, 180.0, 80.0]},
+    ]
+
+
+def test_parse_locate_output_reuses_nearest_ref_label_and_ignores_none():
+    detections = locate_service.parse_locate_output(
+        (
+            "<box>none</box>"
+            "<ref>banana</ref><box><100><200><400><700></box>"
+            "<box><120><220><420><720></box>"
+            "<ref>orange</ref><box><500><250></box>"
+        ),
+        image_width=200,
+        image_height=100,
+        label="fruit",
+    )
+
+    assert detections == [
+        {"kind": "box", "class": "banana", "bbox": [20.0, 20.0, 80.0, 70.0]},
+        {"kind": "box", "class": "banana", "bbox": [24.0, 22.0, 84.0, 72.0]},
+        {"kind": "point", "class": "orange", "point": [100.0, 25.0]},
+    ]
+
+
 def test_parse_locate_output_scales_and_clamps_boxes_and_points():
     detections = locate_service.parse_locate_output(
         "red shirt <box><100><200><900><1100></box> signal <box><500><250></box>",
@@ -47,6 +84,19 @@ def test_parse_locate_output_supports_comma_format_and_ignores_invalid_boxes():
     assert detections == [
         {"kind": "box", "class": "layout", "bbox": [0.0, 0.0, 80.0, 40.0]},
         {"kind": "point", "class": "layout", "point": [20.0, 20.0]},
+    ]
+
+
+def test_generate_suggestions_does_not_duplicate_locate_prefixes():
+    suggestions = locate_service._generate_suggestions(
+        "Locate all instances of all instances of banana and orange",
+        [{"kind": "box", "class": "banana", "bbox": [1, 2, 3, 4]}],
+    )
+
+    assert suggestions == [
+        "Point to banana and orange",
+        "Locate all instances of banana and orange",
+        "Describe this image with Gemini",
     ]
 
 

@@ -8,6 +8,7 @@ import ChatMessages from "./ChatMessages";
 import ChatInputBar from "./ChatInputBar";
 import DatasetPage from "../pages/DatasetPage";
 import { apiDownloadUrl, isApiUrl } from "../downloadUtils";
+import { normalizeSuggestionText } from "../suggestionUtils";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -411,7 +412,7 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
   }, [activeSessionId, inputFile, contextFile, inputPrompt, selectedModel, isAnalyzing, isUploading, updateMessage, startJobListener, authHeaders, loadSessions, storageKey]);
 
   const handleSuggestionClick = useCallback((s) => {
-    setInputPrompt(s);
+    setInputPrompt(normalizeSuggestionText(s));
     if (contextFile) {
       setSelectedModel("gemini");
     }
