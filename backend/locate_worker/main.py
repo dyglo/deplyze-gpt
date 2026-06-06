@@ -22,6 +22,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE = torch.bfloat16 if torch.cuda.is_available() else torch.float32
 SUPPORTED_GENERATION_MODES = {"fast", "slow", "hybrid"}
 DEFAULT_MAX_NEW_TOKENS = 8192
+DEFAULT_MAX_IMAGE_SIDE = 1024
 
 
 class PredictRequest(BaseModel):
@@ -41,6 +42,14 @@ class PredictResponse(BaseModel):
 
 class ModelNotLoadedError(RuntimeError):
     pass
+
+
+def _max_image_side() -> int:
+    try:
+        value = int(os.environ.get("LOCATE_WORKER_MAX_IMAGE_SIDE", str(DEFAULT_MAX_IMAGE_SIDE)))
+    except ValueError:
+        value = DEFAULT_MAX_IMAGE_SIDE
+    return max(256, value)
 
 
 class LocateAnythingWorker:
@@ -147,9 +156,21 @@ app = FastAPI(title="DeplyzeGPT LocateAnything Worker", lifespan=lifespan)
 def _decode_image(image_b64: str) -> Image.Image:
     try:
         payload = image_b64.split(",", 1)[1] if image_b64.startswith("data:") else image_b64
-        return Image.open(io.BytesIO(base64.b64decode(payload))).convert("RGB")
+        image = Image.open(io.BytesIO(base64.b64decode(payload))).convert("RGB")
     except Exception as exc:
         raise HTTPException(status_code=422, detail="Invalid image_b64 payload") from exc
+
+    max_side = _max_image_side()
+    width, height = image.size
+    longest = max(width, height)
+    if longest <= max_side:
+        return image
+
+    scale = max_side / longest
+    return image.resize(
+        (max(1, round(width * scale)), max(1, round(height * scale))),
+        Image.Resampling.LANCZOS,
+    )
 
 
 @app.get("/health")
@@ -180,8 +201,13 @@ def predict(payload: PredictRequest):
     except ModelNotLoadedError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except RuntimeError as exc:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         logger.exception("LocateAnything generation failed")
         raise HTTPException(status_code=500, detail=f"Generation failed: {exc}") from exc
+    finally:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     return PredictResponse(
         answer=str(result.get("answer", "")),
