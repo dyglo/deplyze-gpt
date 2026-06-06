@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import axios from "axios";
 import { doc, onSnapshot } from "firebase/firestore";
-import { Eye, Zap, Layers, Globe } from "lucide-react";
+import { Crosshair, Eye, Zap, Layers, Globe } from "lucide-react";
 import { db } from "../firebase";
 import Sidebar from "./Sidebar";
 import ChatMessages from "./ChatMessages";
@@ -11,13 +11,22 @@ import { apiDownloadUrl, isApiUrl } from "../downloadUtils";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+const ENABLE_LOCATE_ANYTHING = process.env.REACT_APP_ENABLE_LOCATE_ANYTHING === "true";
+const IMAGE_ONLY_MODELS = new Set(["locate-anything"]);
 
-const MODELS = [
+const BASE_MODELS = [
   { id: "gemini",     label: "Gemini",   desc: "Conversational vision analysis",  icon: Eye },
   { id: "yolo26",     label: "YOLO26",   desc: "Fast object detection",           icon: Zap },
   { id: "yolo26-seg", label: "YOLO-Seg", desc: "Instance segmentation",           icon: Layers },
   { id: "yolo26-sem", label: "YOLO-Sem", desc: "Semantic scene understanding",    icon: Globe },
 ];
+
+const MODELS = ENABLE_LOCATE_ANYTHING
+  ? [
+      ...BASE_MODELS,
+      { id: "locate-anything", label: "Locate", desc: "Open-vocabulary grounding", icon: Crosshair },
+    ]
+  : BASE_MODELS;
 
 function fileTypeFromName(filename = "") {
   const ext = filename.split(".").pop()?.toLowerCase();
@@ -159,10 +168,21 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
   const displayName = useMemo(() => user?.displayName || user?.email || "User", [user, profileVersion]);
   const firstName = useMemo(() => displayName.split("@")[0].split(" ")[0] || "there", [displayName]);
   const storageKey = useMemo(() => `deplyzegpt.activeSession.${user.uid}`, [user.uid]);
+  const activeFileForControls = inputFile?.url ? inputFile : contextFile;
+  const disabledModelIds = useMemo(
+    () => activeFileForControls?.file_type === "video" ? ["locate-anything"] : [],
+    [activeFileForControls],
+  );
 
   useEffect(() => () => {
     if (jobUnsubscribeRef.current) jobUnsubscribeRef.current();
   }, []);
+
+  useEffect(() => {
+    if (activeFileForControls?.file_type === "video" && IMAGE_ONLY_MODELS.has(selectedModel)) {
+      setSelectedModel("gemini");
+    }
+  }, [activeFileForControls, selectedModel]);
 
   const authHeaders = useCallback(async (extra = {}) => ({
     ...extra,
@@ -287,6 +307,9 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
 
     const objectUrl = URL.createObjectURL(file);
     const isImg = file.type.startsWith("image/") || ["jpg","jpeg","png","webp"].includes(ext);
+    if (!isImg && IMAGE_ONLY_MODELS.has(selectedModel)) {
+      setSelectedModel("gemini");
+    }
     setInputFile({ uploading: true, filename: file.name, size: file.size, objectUrl, file_type: isImg ? "image" : "video" });
     setUploadProgress(0);
     setUploadError("");
@@ -314,7 +337,7 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
       setIsUploading(false);
       setUploadProgress(0);
     }
-  }, [activeSessionId, authHeaders, loadSessions, storageKey]);
+  }, [activeSessionId, authHeaders, loadSessions, selectedModel, storageKey]);
 
   const handleSend = useCallback(async () => {
     const promptText = inputPrompt.trim();
@@ -327,6 +350,11 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
     const model   = selectedModel;
     const isVideo = file.file_type === "video";
     const sessionId = activeSessionId || file.session_id || null;
+
+    if (isVideo && IMAGE_ONLY_MODELS.has(model)) {
+      setUploadError("LocateAnything supports image analysis only in this preview.");
+      return;
+    }
 
     setInputPrompt("");
     setInputFile(null);
@@ -566,6 +594,7 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
                 selectedModel={selectedModel}
                 onModelSelect={setSelectedModel}
                 models={MODELS}
+                disabledModelIds={disabledModelIds}
                 showSuggestions
                 onSuggestionClick={handleSuggestionClick}
                 centered
@@ -596,6 +625,7 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
               selectedModel={selectedModel}
               onModelSelect={setSelectedModel}
               models={MODELS}
+              disabledModelIds={disabledModelIds}
               showSuggestions={false}
               onSuggestionClick={handleSuggestionClick}
             />

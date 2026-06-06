@@ -1,6 +1,8 @@
 import React from "react";
 
-export default function ModelSelector({ models, selected, onSelect }) {
+export default function ModelSelector({ models, selected, onSelect, disabledModelIds = [] }) {
+  const disabledModelSet = React.useMemo(() => new Set(disabledModelIds), [disabledModelIds]);
+
   return (
     <div>
       <p
@@ -12,25 +14,32 @@ export default function ModelSelector({ models, selected, onSelect }) {
       <div className="grid grid-cols-2 gap-2">
         {models.map(({ id, label, desc, icon: Icon }) => {
           const isActive = selected === id;
+          const isDisabled = disabledModelSet.has(id);
           return (
             <button
               key={id}
               data-testid={`model-card-${id}`}
-              onClick={() => onSelect(id)}
+              onClick={() => {
+                if (isDisabled) return;
+                onSelect(id);
+              }}
+              disabled={isDisabled}
               className="text-left p-3 rounded-xl transition-all active:scale-[0.97]"
               style={{
                 background: isActive ? "rgba(201,106,42,0.1)" : "#1A1A1A",
                 border: `1px solid ${isActive ? "#C96A2A" : "#2A2A2A"}`,
                 boxShadow: isActive ? "0 0 14px rgba(201,106,42,0.12)" : "none",
+                cursor: isDisabled ? "not-allowed" : "pointer",
+                opacity: isDisabled ? 0.45 : 1,
               }}
               onMouseEnter={(e) => {
-                if (!isActive) {
+                if (!isActive && !isDisabled) {
                   e.currentTarget.style.background = "#222";
                   e.currentTarget.style.borderColor = "#333";
                 }
               }}
               onMouseLeave={(e) => {
-                if (!isActive) {
+                if (!isActive && !isDisabled) {
                   e.currentTarget.style.background = "#1A1A1A";
                   e.currentTarget.style.borderColor = "#2A2A2A";
                 }
