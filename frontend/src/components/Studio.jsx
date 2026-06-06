@@ -13,7 +13,8 @@ import { normalizeSuggestionText } from "../suggestionUtils";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 const ENABLE_LOCATE_ANYTHING = process.env.REACT_APP_ENABLE_LOCATE_ANYTHING === "true";
-const IMAGE_ONLY_MODELS = new Set(["locate-anything"]);
+const ENABLE_LOCATE_ANYTHING_VIDEO = process.env.REACT_APP_ENABLE_LOCATE_ANYTHING_VIDEO === "true";
+const IMAGE_ONLY_MODELS = new Set(ENABLE_LOCATE_ANYTHING_VIDEO ? [] : ["locate-anything"]);
 
 const BASE_MODELS = [
   { id: "gemini",     label: "Gemini",   desc: "Conversational vision analysis",  icon: Eye },
@@ -84,6 +85,8 @@ function messageFromPersisted(message) {
       download_url: message.output_download_url,
       job_id: message.job_id,
       detections: message.detections || [],
+      frames: message.frames || [],
+      manifest_url: message.manifest_url,
       suggestions: message.suggestions || [],
     },
     error: null,
@@ -96,6 +99,9 @@ function downloadKeyFor(kind, jobId, source) {
 }
 
 function filenameForBlob(kind, blob) {
+  if (blob.type === "application/zip" || blob.type === "application/x-zip-compressed") {
+    return "deplyzegpt_frame_gallery.zip";
+  }
   if (kind === "video") return "deplyzegpt_output.mp4";
   const extensionByType = {
     "image/png": "png",
@@ -261,7 +267,29 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
         const data = snapshot.data();
         updateMessage(assistId, { videoJob: data });
 
-        if (data.status === "done" && (data.output_url || data.output_key || data.output_r2_path)) {
+        if (data.status === "done" && data.model === "locate-anything") {
+          const response = await axios.get(`${API}/analyze/video/status/${jobId}`, {
+            headers: await authHeaders(),
+          });
+          const status = response.data || data;
+          stopJobListener();
+          setIsAnalyzing(false);
+          updateMessage(assistId, {
+            isLoading: false,
+            videoJob: status,
+            result: {
+              type: "frame_gallery",
+              content: status.output_url,
+              download_url: status.output_download_url || `${API}/files/download/${jobId}`,
+              manifest_url: status.manifest_url,
+              job_id: jobId,
+              frames: status.frames || [],
+              detections: [],
+              suggestions: ["Refine the target prompt", "Describe this video with Gemini", "Download frame gallery"],
+            },
+          });
+          loadSessions().catch(() => {});
+        } else if (data.status === "done" && (data.output_url || data.output_key || data.output_r2_path)) {
           let videoUrl = data.output_url;
           if (!videoUrl) {
             const response = await axios.get(`${API}/files/presign/${jobId}`, {
@@ -353,7 +381,7 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
     const sessionId = activeSessionId || file.session_id || null;
 
     if (isVideo && IMAGE_ONLY_MODELS.has(model)) {
-      setUploadError("LocateAnything supports image analysis only in this preview.");
+      setUploadError("LocateAnything video analysis is not enabled in this environment.");
       return;
     }
 
