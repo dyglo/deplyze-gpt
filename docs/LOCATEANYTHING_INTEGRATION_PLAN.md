@@ -46,6 +46,7 @@ Backend CPU API:
 - `server.py` branches on `payload.model == "locate-anything"` inside `POST /api/analyze/image`.
 - The YOLO class-filter path is skipped for LocateAnything.
 - Images sent to the GPU worker are JPEG-encoded and resized to `LOCATE_MAX_REQUEST_SIDE=1024` by default to keep request bodies and L4 memory use manageable; coordinates still render on the original image dimensions.
+- The CPU API retries transient worker cold-start responses (`429`, `502`, `503`, `504`) until `LOCATE_TIMEOUT_SECONDS` is reached, with `LOCATE_RETRY_DELAY_SECONDS=5` by default. This is required because a scale-from-zero L4 worker can return "no available instance" while the 3B model is still loading.
 - The output follows the existing image result shape: `{ type, content, detections, suggestions }`.
 - The assistant message uses existing Firestore fields: `output_type: "image"`, `output_r2_path`, `model: "locate-anything"`, and `detections`.
 - `POST /api/analyze/video` rejects `locate-anything` with 422 because video is out of scope for v1.

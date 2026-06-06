@@ -2,6 +2,7 @@ import base64
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -21,7 +22,9 @@ DEFAULT_GENERATION_MODE = "hybrid"
 DEFAULT_MAX_NEW_TOKENS = 8192
 DEFAULT_TIMEOUT_SECONDS = 600
 DEFAULT_MAX_REQUEST_SIDE = 1024
+DEFAULT_RETRY_DELAY_SECONDS = 5
 SUPPORTED_GENERATION_MODES = {"fast", "slow", "hybrid"}
+RETRIABLE_STATUS_CODES = {429, 502, 503, 504}
 
 ANNOTATION_PALETTE = [
     (50, 170, 255),
@@ -107,6 +110,14 @@ def _timeout_seconds() -> int:
     return max(30, value)
 
 
+def _retry_delay_seconds() -> int:
+    try:
+        value = int(os.environ.get("LOCATE_RETRY_DELAY_SECONDS", str(DEFAULT_RETRY_DELAY_SECONDS)))
+    except ValueError:
+        value = DEFAULT_RETRY_DELAY_SECONDS
+    return min(30, max(1, value))
+
+
 def _max_new_tokens(configured: Optional[int] = None) -> int:
     if configured is not None:
         return max(1, int(configured))
@@ -188,24 +199,57 @@ def _call_locate_endpoint(
         "max_new_tokens": max_new_tokens,
     }
 
+    timeout_seconds = _timeout_seconds()
+    retry_delay = _retry_delay_seconds()
+    deadline = time.monotonic() + timeout_seconds
+
     try:
-        response = requests.post(
-            _prediction_url(endpoint),
-            json=payload,
-            headers=_auth_headers(endpoint),
-            timeout=_timeout_seconds(),
-        )
-    except requests.Timeout as exc:
-        raise LocateProviderError("LocateAnything took too long to respond. Please try again.") from exc
-    except requests.RequestException as exc:
-        logger.error("LocateAnything request failed: %s", exc, exc_info=True)
-        raise LocateProviderError("LocateAnything is not available right now. Please try again later.") from exc
+        headers = _auth_headers(endpoint)
     except Exception as exc:
         logger.error("LocateAnything authentication/setup failed: %s", exc, exc_info=True)
         raise LocateProviderError("LocateAnything is not available right now. Please try again later.") from exc
 
-    if response.status_code in {502, 503, 504}:
-        raise LocateProviderError("LocateAnything is starting or temporarily busy. Please try again in a moment.")
+    attempt = 0
+    while True:
+        attempt += 1
+        remaining_timeout = max(1, deadline - time.monotonic())
+        try:
+            response = requests.post(
+                _prediction_url(endpoint),
+                json=payload,
+                headers=headers,
+                timeout=remaining_timeout,
+            )
+        except requests.Timeout as exc:
+            raise LocateProviderError("LocateAnything took too long to respond. Please try again.") from exc
+        except requests.RequestException as exc:
+            logger.error("LocateAnything request failed: %s", exc, exc_info=True)
+            raise LocateProviderError("LocateAnything is not available right now. Please try again later.") from exc
+
+        if response.status_code not in RETRIABLE_STATUS_CODES:
+            break
+
+        detail = response.text[:300]
+        if time.monotonic() + retry_delay >= deadline:
+            logger.warning(
+                "LocateAnything endpoint stayed unavailable after %s attempts; last response %s: %s",
+                attempt,
+                response.status_code,
+                detail,
+            )
+            raise LocateProviderError(
+                "LocateAnything is starting or temporarily busy. Please try again in a moment.",
+                status_code=503,
+            )
+
+        logger.info(
+            "LocateAnything endpoint returned %s on attempt %s; retrying in %ss.",
+            response.status_code,
+            attempt,
+            retry_delay,
+        )
+        time.sleep(retry_delay)
+
     if response.status_code >= 400:
         detail = response.text[:300]
         logger.warning("LocateAnything endpoint returned %s: %s", response.status_code, detail)
