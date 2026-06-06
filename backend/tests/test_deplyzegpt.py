@@ -10,6 +10,11 @@ from pathlib import Path
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 TEST_IMAGE_PATH = "/tmp/test_image.jpg"
 
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_LIVE_BACKEND_TESTS") != "true" or not BASE_URL or not Path(TEST_IMAGE_PATH).exists(),
+    reason="Live backend smoke tests require RUN_LIVE_BACKEND_TESTS=true, REACT_APP_BACKEND_URL, and /tmp/test_image.jpg.",
+)
+
 
 @pytest.fixture(scope="module")
 def uploaded_file():

@@ -183,6 +183,7 @@ def _call_locate_endpoint(
     prompt: str,
     generation_mode: str,
     max_new_tokens: int,
+    timeout_seconds: Optional[int] = None,
 ) -> dict[str, Any]:
     if not is_locate_enabled():
         raise LocateConfigurationError(
@@ -200,7 +201,7 @@ def _call_locate_endpoint(
         "max_new_tokens": max_new_tokens,
     }
 
-    timeout_seconds = _timeout_seconds()
+    timeout_seconds = max(30, int(timeout_seconds)) if timeout_seconds is not None else _timeout_seconds()
     retry_delay = _retry_delay_seconds()
     deadline = time.monotonic() + timeout_seconds
 
@@ -455,6 +456,7 @@ def analyze_image_locate(
     prompt: str,
     generation_mode: Optional[str] = None,
     max_new_tokens: Optional[int] = None,
+    timeout_seconds: Optional[int] = None,
 ) -> dict:
     image_b64, image = _encode_image_jpeg(file_path)
     height, width = image.shape[:2]
@@ -466,6 +468,7 @@ def analyze_image_locate(
         prompt=prompt or "Locate the most relevant object in this image.",
         generation_mode=mode,
         max_new_tokens=_max_new_tokens(max_new_tokens),
+        timeout_seconds=timeout_seconds,
     )
     answer = str(result.get("answer", ""))
     detections = parse_locate_output(answer, width, height, label=label)
@@ -483,6 +486,8 @@ def analyze_image_locate(
         "suggestions": _generate_suggestions(prompt, detections),
         "raw_answer": answer,
         "generation_mode": mode,
+        "timings": result.get("timings") or {},
+        "stats": result.get("stats"),
         "model": DEFAULT_MODEL_ID,
         "source_filename": Path(file_path).name,
     }
