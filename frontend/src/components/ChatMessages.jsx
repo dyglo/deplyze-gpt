@@ -88,10 +88,16 @@ function videoProgressLabel(videoJob) {
   if (videoJob.status === "queued") return "Locate video queued...";
   const total = videoJob.frame_total || 0;
   const completed = videoJob.frame_completed || 0;
+  const batchTotal = videoJob.batch_total || 0;
+  const batchCompleted = videoJob.batch_completed || 0;
 
   if (videoJob.phase === "extracting") return "Extracting sampled frames...";
+  if (videoJob.phase === "analyzing" && batchTotal) {
+    return `Analyzing batch ${batchCompleted}/${batchTotal} - ${videoJob.progress}%`;
+  }
   if (videoJob.phase === "analyzing" && total) return `Analyzing frame ${completed}/${total} - ${videoJob.progress}%`;
-  if (videoJob.phase === "stitching") return "Stitching annotated video...";
+  if (videoJob.phase === "rendering") return "Rendering annotated video...";
+  if (videoJob.phase === "stitching") return "Rendering annotated video...";
   if (videoJob.phase === "uploading") return "Uploading annotated video...";
   return `Processing sampled frames - ${videoJob.progress}%`;
 }
