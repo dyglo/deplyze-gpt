@@ -41,6 +41,7 @@ google-auth-httplib2==0.4.0
 google-cloud-aiplatform==1.153.1
 google-cloud-firestore==2.27.0
 google-cloud-storage==3.11.0
+google-cloud-tasks==2.22.0
 googleapis-common-protos==1.75.0
 grpcio==1.81.0
 grpcio-status==1.71.2

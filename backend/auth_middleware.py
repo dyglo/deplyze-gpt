@@ -85,6 +85,7 @@ class FirebaseAuthMiddleware(BaseHTTPMiddleware):
         if (
             request.method == "OPTIONS"
             or request.url.path == "/api/healthz"
+            or request.url.path.startswith("/api/internal/")
             or not request.url.path.startswith("/api/")
         ):
             return await call_next(request)

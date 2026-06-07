@@ -11,19 +11,26 @@ from typing import Any, Callable, Optional
 
 import cv2
 
-from locate_service import analyze_image_locate, render_locate_annotations
+from locate_service import analyze_images_locate_batch, render_locate_annotations
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_DURATION_SECONDS = 180
-DEFAULT_MAX_FRAMES = 24
-DEFAULT_SAMPLE_SECONDS = 5.0
+DEFAULT_MAX_DURATION_SECONDS = 120
+DEFAULT_MAX_FRAMES = 48
+DEFAULT_SAMPLE_SECONDS = 2.5
 DEFAULT_MIN_FRAMES = 6
 DEFAULT_SCENE_THRESHOLD = 0.35
 DEFAULT_MIN_GAP_SECONDS = 1.5
 DEFAULT_FRAME_TIMEOUT_SECONDS = 180
 DEFAULT_JOB_TIMEOUT_SECONDS = 1800
 DEFAULT_OUTPUT_FPS = 24
+DEFAULT_FRAME_BATCH_SIZE = 4
+DEFAULT_TARGET_P95_SECONDS = 180
+FRAME_CAP_USER_MESSAGE = (
+    "This LocateAnything video needs too many analysis frames for the fast video lane. "
+    "The current limit is {cap} analysis frames, about 2 minutes at standard quality. "
+    "Trim the clip or use YOLO/Gemini for longer videos."
+)
 
 SHOWINFO_PTS_RE = re.compile(r"pts_time:([0-9]+(?:\.[0-9]+)?)")
 
@@ -47,6 +54,12 @@ class LocateVideoDurationError(LocateVideoError):
     pass
 
 
+class LocateVideoFrameCapError(LocateVideoError):
+    def __init__(self, message: str, status_code: int = 422):
+        super().__init__(message, status_code)
+        self.error_code = "analysis_frame_cap_exceeded"
+
+
 def _env_int(name: str, default: int, minimum: int = 1) -> int:
     try:
         value = int(os.environ.get(name, str(default)))
@@ -68,7 +81,15 @@ def max_duration_seconds() -> int:
 
 
 def max_frames() -> int:
-    return _env_int("LOCATE_VIDEO_MAX_FRAMES", DEFAULT_MAX_FRAMES)
+    return _env_int("LOCATE_VIDEO_MAX_ANALYSIS_FRAMES", _env_int("LOCATE_VIDEO_MAX_FRAMES", DEFAULT_MAX_FRAMES))
+
+
+def frame_batch_size() -> int:
+    return _env_int("LOCATE_VIDEO_FRAME_BATCH_SIZE", DEFAULT_FRAME_BATCH_SIZE)
+
+
+def target_p95_seconds() -> int:
+    return _env_int("LOCATE_VIDEO_TARGET_P95_SECONDS", DEFAULT_TARGET_P95_SECONDS)
 
 
 def sample_seconds() -> float:
@@ -204,7 +225,7 @@ def validate_video_duration(duration_seconds: float, limit_seconds: Optional[int
         raise LocateVideoDurationError("Could not read video duration for LocateAnything analysis.")
     if duration_seconds > limit:
         raise LocateVideoDurationError(
-            f"LocateAnything video analysis supports videos up to {limit} seconds in v2.0."
+            f"LocateAnything video analysis supports videos up to {limit} seconds in the fast video lane."
         )
 
 
@@ -269,6 +290,7 @@ def merge_sample_timestamps(
     duration_seconds: float,
     min_gap_seconds: float = DEFAULT_MIN_GAP_SECONDS,
     frame_cap: Optional[int] = None,
+    reject_over_cap: bool = False,
 ) -> list[dict[str, Any]]:
     cap = frame_cap or max_frames()
     candidates: list[dict[str, Any]] = []
@@ -285,6 +307,9 @@ def merge_sample_timestamps(
             merged[-1]["sources"].update(candidate["sources"])
             continue
         merged.append(candidate)
+
+    if len(merged) > cap and reject_over_cap:
+        raise LocateVideoFrameCapError(FRAME_CAP_USER_MESSAGE.format(cap=cap))
 
     if len(merged) > cap:
         merged = _thin_samples(merged, cap)
@@ -320,13 +345,24 @@ def _thin_samples(samples: list[dict[str, Any]], cap: int) -> list[dict[str, Any
     return [samples[index] for index in sorted(selected)[:cap]]
 
 
-def build_frame_samples(video_path: str, duration_seconds: Optional[float] = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def build_frame_samples(
+    video_path: str,
+    duration_seconds: Optional[float] = None,
+    enforce_frame_cap: bool = True,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     duration = duration_seconds if duration_seconds is not None else _get_video_duration_seconds(video_path)
     validate_video_duration(duration)
 
     uniform = uniform_sample_timestamps(duration, sample_seconds(), DEFAULT_MIN_FRAMES, max_frames())
     scene = scene_change_timestamps(video_path, scene_threshold())
-    samples = merge_sample_timestamps(uniform, scene, duration, DEFAULT_MIN_GAP_SECONDS, max_frames())
+    samples = merge_sample_timestamps(
+        uniform,
+        scene,
+        duration,
+        DEFAULT_MIN_GAP_SECONDS,
+        max_frames(),
+        reject_over_cap=enforce_frame_cap,
+    )
     if not samples:
         raise LocateVideoError("No video frames could be sampled for LocateAnything analysis.")
 
@@ -338,6 +374,9 @@ def build_frame_samples(video_path: str, duration_seconds: Optional[float] = Non
         "min_gap_seconds": DEFAULT_MIN_GAP_SECONDS,
         "min_frames": DEFAULT_MIN_FRAMES,
         "max_frames": max_frames(),
+        "analysis_frame_cap": max_frames(),
+        "target_p95_seconds": target_p95_seconds(),
+        "frame_batch_size": frame_batch_size(),
         "uniform_count": len(uniform),
         "scene_count": len(scene),
         "selected_count": len(samples),
@@ -346,7 +385,7 @@ def build_frame_samples(video_path: str, duration_seconds: Optional[float] = Non
 
 
 def _public_frame(frame: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in frame.items() if key not in {"path"}}
+    return {key: value for key, value in frame.items() if key not in {"path", "raw_path"}}
 
 
 def _frame_timestamp_seconds(cap: cv2.VideoCapture, frame_index: int, fps: float) -> float:
@@ -446,15 +485,14 @@ def _even_output_size(width: int, height: int) -> tuple[int, int]:
 def _render_full_duration_video(
     job_id: str,
     video_path: str,
-    prompt: str,
     metadata: VideoMetadata,
     duration_seconds: float,
     outputs_dir: Path,
+    analyzed_frames: list[dict[str, Any]],
     progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
-) -> tuple[str, list[dict[str, Any]]]:
+) -> str:
     temp_path = outputs_dir / f"{job_id}_raw.avi"
     final_path = outputs_dir / f"{job_id}.mp4"
-    frame_jpeg_path = outputs_dir / f"{job_id}_current_frame.jpg"
     fps = output_fps(metadata.fps)
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -479,8 +517,39 @@ def _render_full_duration_video(
 
     total_frames = metadata.frame_count or int(max(duration_seconds, 1.0) * fps)
     progress_step = max(1, total_frames // 20)
-    frame_results: list[dict[str, Any]] = []
     frame_index = 0
+    sorted_analysis = sorted(analyzed_frames, key=lambda frame: float(frame.get("timestamp_seconds") or 0.0))
+
+    def detections_for_timestamp(timestamp: float, output_width: int, output_height: int) -> list[dict]:
+        if not sorted_analysis:
+            return []
+        nearest = min(
+            sorted_analysis,
+            key=lambda frame: abs(float(frame.get("timestamp_seconds") or 0.0) - timestamp),
+        )
+        detections = nearest.get("detections") or []
+        source_width = nearest.get("width") or output_width
+        source_height = nearest.get("height") or output_height
+        if source_width == output_width and source_height == output_height:
+            return detections
+        x_scale = output_width / max(float(source_width), 1.0)
+        y_scale = output_height / max(float(source_height), 1.0)
+        scaled = []
+        for detection in detections:
+            item = dict(detection)
+            if item.get("bbox"):
+                x1, y1, x2, y2 = item["bbox"]
+                item["bbox"] = [
+                    round(x1 * x_scale, 1),
+                    round(y1 * y_scale, 1),
+                    round(x2 * x_scale, 1),
+                    round(y2 * y_scale, 1),
+                ]
+            if item.get("point"):
+                x, y = item["point"]
+                item["point"] = [round(x * x_scale, 1), round(y * y_scale, 1)]
+            scaled.append(item)
+        return scaled
 
     try:
         while cap.isOpened():
@@ -493,44 +562,18 @@ def _render_full_duration_video(
                 cv2.resize(frame, (out_width, out_height), interpolation=cv2.INTER_AREA)
                 if (out_width, out_height) != (width, height) else frame
             )
-
-            _write_jpeg(frame_jpeg_path, output_frame)
-            start = time.perf_counter()
-            result = analyze_image_locate(
-                str(frame_jpeg_path),
-                prompt,
-                timeout_seconds=frame_timeout_seconds(),
-            )
-            elapsed = round(time.perf_counter() - start, 3)
-
-            detections = result.get("detections") or []
+            detections = detections_for_timestamp(timestamp_seconds, out_width, out_height)
             annotated = render_locate_annotations(output_frame, detections)
 
             out.write(annotated)
             frame_index += 1
-            timings = dict(result.get("timings") or {})
-            timings.setdefault("total_seconds", elapsed)
-            timings["client_total_seconds"] = elapsed
-            frame_results.append(
-                {
-                    "index": frame_index,
-                    "filename": f"frame_{frame_index:06d}.jpg",
-                    "timestamp_seconds": round(timestamp_seconds, 3),
-                    "source": "decoded_frame",
-                    "detections": detections,
-                    "raw_answer": result.get("raw_answer", ""),
-                    "generation_mode": result.get("generation_mode"),
-                    "model": result.get("model"),
-                    "timings": timings,
-                }
-            )
 
             if frame_index % progress_step == 0:
-                raw_progress = 5 + int((frame_index / max(total_frames, 1)) * 84)
+                raw_progress = 70 + int((frame_index / max(total_frames, 1)) * 20)
                 _update(
                     progress_callback,
                     {
-                        "phase": "analyzing",
+                        "phase": "rendering",
                         "progress": min(raw_progress, 89),
                         "frame_total": total_frames,
                         "frame_completed": frame_index,
@@ -539,7 +582,6 @@ def _render_full_duration_video(
     finally:
         cap.release()
         out.release()
-        frame_jpeg_path.unlink(missing_ok=True)
 
     if frame_index <= 0 or not temp_path.exists() or temp_path.stat().st_size <= 0:
         temp_path.unlink(missing_ok=True)
@@ -547,7 +589,7 @@ def _render_full_duration_video(
 
     _update(
         progress_callback,
-        {"phase": "stitching", "progress": 90, "frame_total": total_frames, "frame_completed": frame_index},
+        {"phase": "rendering", "progress": 90, "rendered_frame_total": total_frames, "rendered_frame_completed": frame_index},
     )
 
     cmd = [
@@ -583,7 +625,7 @@ def _render_full_duration_video(
         raise LocateVideoError("FFmpeg did not produce a LocateAnything MP4 output.", status_code=500)
 
     temp_path.unlink(missing_ok=True)
-    return str(final_path), frame_results
+    return str(final_path)
 
 
 def _update(progress_callback: Optional[Callable[[dict[str, Any]], None]], updates: dict[str, Any]) -> None:
@@ -593,6 +635,100 @@ def _update(progress_callback: Optional[Callable[[dict[str, Any]], None]], updat
         progress_callback(updates)
     except Exception as exc:
         logger.warning("Locate video progress update failed: %s", exc)
+
+
+def _chunks(items: list[dict[str, Any]], size: int):
+    for index in range(0, len(items), size):
+        yield index // size, items[index:index + size]
+
+
+def _analyze_sample_frames(
+    raw_frames: list[dict[str, Any]],
+    prompt: str,
+    progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not raw_frames:
+        return [], {"backend": "none", "batch_size": 0, "batch_total": 0}
+
+    batch_size = frame_batch_size()
+    batch_total = math.ceil(len(raw_frames) / batch_size)
+    analyzed: list[dict[str, Any]] = []
+    backend = None
+    reported_batch_size = batch_size
+
+    for batch_index, batch in _chunks(raw_frames, batch_size):
+        _update(
+            progress_callback,
+            {
+                "status": "processing",
+                "phase": "analyzing",
+                "progress": 15 + int((batch_index / max(batch_total, 1)) * 50),
+                "frame_total": len(raw_frames),
+                "frame_completed": len(analyzed),
+                "batch_total": batch_total,
+                "batch_completed": batch_index,
+            },
+        )
+        request_frames = [
+            {
+                "frame_id": str(frame["index"]),
+                "index": frame["index"],
+                "path": frame["raw_path"],
+                "timestamp_seconds": frame.get("timestamp_seconds"),
+            }
+            for frame in batch
+        ]
+        start = time.perf_counter()
+        batch_result = analyze_images_locate_batch(
+            request_frames,
+            prompt,
+            timeout_seconds=max(frame_timeout_seconds(), frame_timeout_seconds() * len(batch)),
+        )
+        elapsed = round(time.perf_counter() - start, 3)
+        backend = backend or batch_result.get("backend")
+        reported_batch_size = int(batch_result.get("batch_size") or reported_batch_size)
+        results_by_id = {str(result.get("frame_id")): result for result in batch_result.get("results") or []}
+        for frame in batch:
+            raw_path = Path(frame["raw_path"])
+            image = cv2.imread(str(raw_path))
+            height, width = image.shape[:2] if image is not None else (0, 0)
+            result = results_by_id.get(str(frame["index"]), {})
+            timings = dict(result.get("timings") or {})
+            timings.setdefault("batch_client_seconds", elapsed)
+            analyzed.append(
+                {
+                    **frame,
+                    "filename": raw_path.name,
+                    "timestamp_seconds": round(float(frame.get("timestamp_seconds") or 0.0), 3),
+                    "detections": result.get("detections") or [],
+                    "raw_answer": result.get("raw_answer", ""),
+                    "generation_mode": result.get("generation_mode"),
+                    "model": result.get("model"),
+                    "timings": timings,
+                    "width": width,
+                    "height": height,
+                }
+            )
+
+        _update(
+            progress_callback,
+            {
+                "phase": "analyzing",
+                "progress": 15 + int(((batch_index + 1) / max(batch_total, 1)) * 50),
+                "frame_total": len(raw_frames),
+                "frame_completed": len(analyzed),
+                "batch_total": batch_total,
+                "batch_completed": batch_index + 1,
+                "backend": backend,
+                "batch_size": reported_batch_size,
+            },
+        )
+
+    return analyzed, {
+        "backend": backend or "batch-endpoint",
+        "batch_size": reported_batch_size,
+        "batch_total": batch_total,
+    }
 
 
 def process_video_locate(
@@ -609,33 +745,42 @@ def process_video_locate(
     validate_video_duration(metadata.duration_seconds)
     duration_seconds = float(metadata.duration_seconds)
     fps = output_fps(metadata.fps)
-    total_frames = metadata.frame_count or int(max(duration_seconds, 1.0) * fps)
-    sampling = {
-        "strategy": "per_frame",
-        "duration_seconds": round(duration_seconds, 3),
-        "source_fps": round(metadata.fps, 3),
-        "output_fps": round(fps, 3),
-        "frame_count": total_frames,
-    }
+    samples, sampling = build_frame_samples(video_path, duration_seconds, enforce_frame_cap=True)
+    sampling.update(
+        {
+            "source_fps": round(metadata.fps, 3),
+            "output_fps": round(fps, 3),
+            "source_frame_count": metadata.frame_count,
+        }
+    )
     _update(
         progress_callback,
         {
             "status": "processing",
-            "phase": "analyzing",
-            "progress": 5,
-            "frame_total": total_frames,
+            "phase": "extracting",
+            "progress": 8,
+            "frame_total": len(samples),
             "frame_completed": 0,
+            "batch_total": math.ceil(len(samples) / frame_batch_size()),
+            "batch_completed": 0,
             "sampling": sampling,
+            "analysis_frame_cap": max_frames(),
+            "target_p95_seconds": target_p95_seconds(),
+            "batch_size": frame_batch_size(),
         },
     )
 
-    output_path, frames = _render_full_duration_video(
+    raw_frames = extract_sample_frames(video_path, samples, outputs_dir / "sampled_frames", metadata)
+    frames, batch_info = _analyze_sample_frames(raw_frames, prompt, progress_callback)
+
+    _update(progress_callback, {"phase": "rendering", "progress": 70})
+    output_path = _render_full_duration_video(
         job_id,
         video_path,
-        prompt,
         metadata,
         duration_seconds,
         outputs_dir,
+        frames,
         progress_callback,
     )
 
@@ -645,4 +790,7 @@ def process_video_locate(
         "frames": [_public_frame(frame) for frame in frames],
         "output_path": output_path,
         "sampling": sampling,
+        "backend": batch_info.get("backend"),
+        "batch_size": batch_info.get("batch_size"),
+        "batch_total": batch_info.get("batch_total"),
     }

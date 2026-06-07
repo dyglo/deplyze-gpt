@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import axios from "axios";
-import { doc, onSnapshot } from "firebase/firestore";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { Crosshair, Eye, Zap, Layers, Globe } from "lucide-react";
 import { db } from "../firebase";
 import Sidebar from "./Sidebar";
 import ChatMessages from "./ChatMessages";
 import ChatInputBar from "./ChatInputBar";
 import DatasetPage from "../pages/DatasetPage";
+import { toast } from "../hooks/use-toast";
 import { apiDownloadUrl, isApiUrl } from "../downloadUtils";
 import { normalizeSuggestionText } from "../suggestionUtils";
 
@@ -43,6 +44,13 @@ function inputUrlFromMessage(message) {
   return `/api/files/uploads/${message.job_id}/input${ext}`;
 }
 
+function jobIdFromFileUrl(fileUrl = "") {
+  const marker = "/api/files/uploads/";
+  if (!fileUrl.includes(marker)) return "";
+  const remainder = fileUrl.split(marker, 1)[1].replace(/^\/+|\/+$/g, "");
+  return remainder.split("/")[0] || "";
+}
+
 function messageFromPersisted(message) {
   if (message.role === "user") {
     const filename = message.input_filename || "";
@@ -70,6 +78,23 @@ function messageFromPersisted(message) {
       result: null,
       error: message.content,
       videoJob: null,
+    };
+  }
+
+  if (message.output_type === "video_job") {
+    return {
+      id: message.message_id,
+      type: "assistant",
+      isLoading: true,
+      model: message.model,
+      result: null,
+      error: null,
+      videoJob: {
+        job_id: message.job_id,
+        status: "queued",
+        progress: 0,
+        model: message.model,
+      },
     };
   }
 
@@ -164,7 +189,10 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [view, setView] = useState("chat");
   const [downloadStatus, setDownloadStatus] = useState({});
-  const jobUnsubscribeRef = useRef(null);
+  const [videoJobsBySession, setVideoJobsBySession] = useState({});
+  const knownJobStatusesRef = useRef(new Map());
+  const jobsInitialLoadRef = useRef(true);
+  const clearingSeenRef = useRef(new Set());
   const isEmpty = messages.length === 0;
   // profileVersion is included so the greeting refreshes after a profile edit
   // (updateProfile mutates the same user object in place).
@@ -174,13 +202,9 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
   const storageKey = useMemo(() => `deplyzegpt.activeSession.${user.uid}`, [user.uid]);
   const activeFileForControls = inputFile?.url ? inputFile : contextFile;
   const disabledModelIds = useMemo(
-    () => activeFileForControls?.file_type === "video" ? ["locate-anything"] : [],
+    () => activeFileForControls?.file_type === "video" ? Array.from(IMAGE_ONLY_MODELS) : [],
     [activeFileForControls],
   );
-
-  useEffect(() => () => {
-    if (jobUnsubscribeRef.current) jobUnsubscribeRef.current();
-  }, []);
 
   useEffect(() => {
     if (activeFileForControls?.file_type === "video" && IMAGE_ONLY_MODELS.has(selectedModel)) {
@@ -222,6 +246,13 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
       }
       setActiveSessionId(sessionId);
       localStorage.setItem(storageKey, sessionId);
+      axios.post(`${API}/sessions/${sessionId}/video-indicator/seen`, {}, {
+        headers: await authHeaders(),
+      }).then(({ data: session }) => {
+        setSessions((current) =>
+          current.map((item) => item.session_id === sessionId ? { ...item, ...session } : item)
+        );
+      }).catch(() => {});
     } finally {
       setIsLoadingSession(false);
     }
@@ -247,64 +278,127 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
     setMessages(prev => prev.map(m => m.id === id ? { ...m, ...updates } : m));
   }, []);
 
-  const stopJobListener = useCallback(() => {
-    if (jobUnsubscribeRef.current) {
-      jobUnsubscribeRef.current();
-      jobUnsubscribeRef.current = null;
+  const markSessionVideoSeen = useCallback(async (sessionId) => {
+    if (!sessionId || clearingSeenRef.current.has(sessionId)) return;
+    clearingSeenRef.current.add(sessionId);
+    try {
+      const { data } = await axios.post(`${API}/sessions/${sessionId}/video-indicator/seen`, {}, {
+        headers: await authHeaders(),
+      });
+      setSessions((current) =>
+        current.map((session) => session.session_id === sessionId ? { ...session, ...data } : session)
+      );
+    } catch {
+      // The next session refresh will reconcile the indicator.
+    } finally {
+      clearingSeenRef.current.delete(sessionId);
     }
-  }, []);
+  }, [authHeaders]);
 
-  const startJobListener = useCallback((jobId, assistId) => {
-    stopJobListener();
-    const jobDocument = doc(db, "jobs", user.uid, "items", jobId);
-    jobUnsubscribeRef.current = onSnapshot(
-      jobDocument,
-      async (snapshot) => {
-        if (!snapshot.exists()) return;
-        const data = snapshot.data();
-        updateMessage(assistId, { videoJob: data });
+  const hydrateDoneVideoJob = useCallback(async (job) => {
+    if (!job?.job_id || !(job.output_url || job.output_key || job.output_r2_path)) return;
+    let videoUrl = job.output_url;
+    if (!videoUrl) {
+      const response = await axios.get(`${API}/files/presign/${job.job_id}`, {
+        headers: await authHeaders(),
+      });
+      videoUrl = response.data.url;
+    }
+    const result = videoUrl ? {
+        type: "video",
+        content: videoUrl,
+        download_url: `${API}/files/download/${job.job_id}`,
+        job_id: job.job_id,
+        detections: [],
+        frames: job.frames || [],
+        suggestions: job.model === "locate-anything"
+          ? ["Refine the target prompt", "Describe this video with Gemini", "Download result"]
+          : ["Analyze frames with Gemini", "Run segmentation", "Download result"],
+      } : null;
+    setMessages((current) => current.map((message) => {
+      const messageJobId = message.videoJob?.job_id || message.result?.job_id || (
+        message.id?.startsWith("job-") ? message.id.replace(/^job-/, "").replace(/-assistant$/, "") : ""
+      );
+      if (messageJobId !== job.job_id) return message;
+      return {
+        ...message,
+        isLoading: false,
+        error: null,
+        videoJob: job,
+        result,
+      };
+    }));
+  }, [authHeaders]);
 
-        if (data.status === "done" && (data.output_url || data.output_key || data.output_r2_path)) {
-          let videoUrl = data.output_url;
-          if (!videoUrl) {
-            const response = await axios.get(`${API}/files/presign/${jobId}`, {
-              headers: await authHeaders(),
-            });
-            videoUrl = response.data.url;
-          }
-          stopJobListener();
-          setIsAnalyzing(false);
-          updateMessage(assistId, {
-            isLoading: false,
-            videoJob: data,
-            result: videoUrl ? {
-              type: "video",
-              content: videoUrl,
-              download_url: `${API}/files/download/${jobId}`,
-              job_id: jobId,
-              detections: [],
-              suggestions: data.model === "locate-anything"
-                ? ["Refine the target prompt", "Describe this video with Gemini", "Download result"]
-                : ["Analyze frames with Gemini", "Run segmentation", "Download result"],
-            } : null,
-          });
-          loadSessions().catch(() => {});
-        } else if (data.status === "failed") {
-          stopJobListener();
-          setIsAnalyzing(false);
-          updateMessage(assistId, { isLoading: false, error: data.error || "Video processing failed", videoJob: data });
-        }
-      },
-      (error) => {
-        stopJobListener();
-        setIsAnalyzing(false);
-        updateMessage(assistId, {
-          isLoading: false,
-          error: error?.message || "Video status listener failed. Please try again.",
+  useEffect(() => {
+    if (!user?.uid) return undefined;
+    const jobsQuery = query(collection(db, "jobs", user.uid, "items"), where("type", "==", "video"));
+    return onSnapshot(
+      jobsQuery,
+      (snapshot) => {
+        const bySession = {};
+        const jobs = [];
+        snapshot.forEach((item) => {
+          const job = { job_id: item.id, ...item.data() };
+          jobs.push(job);
+          if (!job.session_id) return;
+          const current = bySession[job.session_id];
+          const isActiveJob = job.status === "queued" || job.status === "processing";
+          if (isActiveJob || !current) bySession[job.session_id] = job;
         });
+        setVideoJobsBySession(bySession);
+
+        const jobsById = new Map(jobs.map((job) => [job.job_id, job]));
+        setMessages((current) => current.map((message) => {
+          const jobId = message.videoJob?.job_id || message.result?.job_id || (
+            message.id?.startsWith("job-") ? message.id.replace(/^job-/, "").replace(/-assistant$/, "") : ""
+          );
+          const job = jobsById.get(jobId);
+          if (!job) return message;
+          if (job.status === "queued" || job.status === "processing") {
+            return { ...message, isLoading: true, error: null, videoJob: job };
+          }
+          if (job.status === "failed") {
+            return {
+              ...message,
+              isLoading: false,
+              result: null,
+              error: job.user_message || job.error || "Video processing failed",
+              videoJob: job,
+            };
+          }
+          return { ...message, videoJob: job };
+        }));
+
+        jobs.forEach((job) => {
+          const previous = knownJobStatusesRef.current.get(job.job_id);
+          knownJobStatusesRef.current.set(job.job_id, job.status);
+          if (job.status === "done") {
+            hydrateDoneVideoJob(job).catch(() => {});
+            if (job.session_id === activeSessionId) {
+              markSessionVideoSeen(job.session_id).catch(() => {});
+            }
+            if (!jobsInitialLoadRef.current && previous && previous !== "done") {
+              const session = sessions.find((item) => item.session_id === job.session_id);
+              toast({
+                title: "Video ready",
+                description: session?.name || "Your video finished processing.",
+                duration: 3000,
+              });
+              loadSessions().catch(() => {});
+            }
+          }
+          if (job.status === "failed" && !jobsInitialLoadRef.current && previous && previous !== "failed") {
+            loadSessions().catch(() => {});
+          }
+        });
+        jobsInitialLoadRef.current = false;
+      },
+      () => {
+        setUploadError("Video status listener failed. Refresh the page to reconnect.");
       },
     );
-  }, [authHeaders, loadSessions, stopJobListener, updateMessage, user.uid]);
+  }, [activeSessionId, hydrateDoneVideoJob, loadSessions, markSessionVideoSeen, sessions, user.uid]);
 
   const handleFileSelect = useCallback(async (file) => {
     const ext = file.name.split(".").pop().toLowerCase();
@@ -369,8 +463,9 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
     setUploadError("");
     setIsAnalyzing(true);
 
-    const userId  = `user-${Date.now()}`;
-    const assistId = `asst-${Date.now() + 1}`;
+    const uploadJobId = jobIdFromFileUrl(file.url);
+    const userId = uploadJobId ? `job-${uploadJobId}-user-local` : `user-${Date.now()}`;
+    const assistId = uploadJobId ? `job-${uploadJobId}-assistant` : `asst-${Date.now() + 1}`;
 
     setMessages(prev => [
       ...prev,
@@ -397,7 +492,7 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
             localStorage.setItem(storageKey, data.session_id);
           }
           updateMessage(assistId, { videoJob: { job_id: data.job_id, status: "queued", progress: 0, model } });
-          startJobListener(data.job_id, assistId);
+          setIsAnalyzing(false);
           loadSessions().catch(() => {});
         }
       } else {
@@ -414,7 +509,7 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
       updateMessage(assistId, { isLoading: false, error: e.response?.data?.detail || "Analysis failed. Please try again." });
       setIsAnalyzing(false);
     }
-  }, [activeSessionId, inputFile, contextFile, inputPrompt, selectedModel, isAnalyzing, isUploading, updateMessage, startJobListener, authHeaders, loadSessions, storageKey]);
+  }, [activeSessionId, inputFile, contextFile, inputPrompt, selectedModel, isAnalyzing, isUploading, updateMessage, authHeaders, loadSessions, storageKey]);
 
   const handleSuggestionClick = useCallback((s) => {
     setInputPrompt(normalizeSuggestionText(s));
@@ -488,7 +583,6 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
 
   const handleNewChat = useCallback(() => {
     setView("chat");
-    stopJobListener();
     setMessages([]);
     setInputPrompt("");
     setInputFile(null);
@@ -499,17 +593,16 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
     setIsUploading(false);
     setUploadProgress(0);
     setUploadError("");
-  }, [stopJobListener, storageKey]);
+  }, [storageKey]);
 
   const handleSelectSession = useCallback((sessionId) => {
     setView("chat");
     if (!sessionId || sessionId === activeSessionId) return;
-    stopJobListener();
     setInputPrompt("");
     setInputFile(null);
     setUploadError("");
     loadSessionMessages(sessionId).catch(() => {});
-  }, [activeSessionId, loadSessionMessages, stopJobListener]);
+  }, [activeSessionId, loadSessionMessages]);
 
   const handleRenameSession = useCallback(async (sessionId, name) => {
     const cleanName = name.trim();
@@ -576,6 +669,7 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
         onDeleteSession={handleDeleteSession}
         activeView={view}
         onSelectView={setView}
+        videoJobsBySession={videoJobsBySession}
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">

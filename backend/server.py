@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -7,20 +7,20 @@ import uuid
 import asyncio
 import base64
 import logging
+import math
 import tempfile
 from pathlib import Path
 from urllib.parse import quote
 from pydantic import BaseModel
 from typing import Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
-import cv2
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 from auth_middleware import FirebaseAuthMiddleware
-from firestore_service import create_job, get_job, update_job, update_job_sync
-from r2_service import upload_bytes, upload_file, upload_fileobj, download_file, get_object, presigned_get_url
+from firestore_service import create_job, get_job, update_job, utc_now_iso
+from r2_service import upload_bytes, upload_fileobj, download_file, get_object, presigned_get_url
 from session_service import (
     add_message,
     delete_session,
@@ -29,10 +29,14 @@ from session_service import (
     list_messages,
     list_sessions,
     name_from_context,
+    clear_session_video_unseen,
+    set_session_video_status,
     update_session,
 )
 from gemini_service import GeminiServiceError
 from locate_service import MODEL_TYPE as LOCATE_MODEL_TYPE, LocateServiceError
+from task_queue_service import TaskQueueConfigurationError, TaskQueueEnqueueError, enqueue_video_job
+from video_job_runner import InternalAuthError, run_video_job, verify_internal_video_request
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -81,6 +85,12 @@ class VideoGeminiRequest(BaseModel):
     session_id: Optional[str] = None
 
 
+class InternalVideoJobRequest(BaseModel):
+    uid: str
+    session_id: str
+    job_id: str
+
+
 class SessionCreateRequest(BaseModel):
     name: Optional[str] = None
     prompt: Optional[str] = None
@@ -102,6 +112,20 @@ def _uid(request: Request) -> str:
 
 def _storage_key(uid: str, session_id: str, job_id: str, kind: str, filename: str) -> str:
     return f"{kind}/{uid}/{session_id}/{job_id}/{filename}"
+
+
+def _assistant_message_id(job_id: str) -> str:
+    return f"job-{job_id}-assistant"
+
+
+def _task_retry_header(request: Request, name: str) -> Optional[int]:
+    value = request.headers.get(name)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
 
 
 def _download_url_for_output_key(key: str) -> Optional[str]:
@@ -153,20 +177,6 @@ def _job_id_from_file_url(file_url: str) -> Optional[str]:
     remainder = file_url.split(marker, 1)[1].strip("/")
     parts = remainder.split("/")
     return parts[0] if parts else None
-
-
-def _get_video_duration_seconds(video_path: str) -> float:
-    cap = cv2.VideoCapture(video_path)
-    try:
-        if not cap.isOpened():
-            return 0.0
-        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
-        fps = cap.get(cv2.CAP_PROP_FPS) or 0
-        if frame_count <= 0 or fps <= 0:
-            return 0.0
-        return frame_count / fps
-    finally:
-        cap.release()
 
 
 def _require_job(uid: str, job_id: str) -> dict:
@@ -254,31 +264,6 @@ def _decode_data_uri(data_uri: str) -> Tuple[bytes, str]:
     return base64.b64decode(encoded), content_type
 
 
-def _build_progress_mongo_client(uid: str, job_id: str):
-    class FakeCollection:
-        def update_one(self, _filter, update):
-            updates = dict(update.get("$set", update))
-            if updates.get("status") == "done" and "output_url" not in updates:
-                updates["status"] = "processing"
-                updates["progress"] = min(int(updates.get("progress", 95)), 95)
-            update_job_sync(uid, job_id, updates)
-
-    class FakeDatabase:
-        video_jobs = FakeCollection()
-
-    class FakeMongoClient:
-        def __init__(self, *_args, **_kwargs):
-            pass
-
-        def __getitem__(self, _name):
-            return FakeDatabase()
-
-        def close(self):
-            pass
-
-    return FakeMongoClient
-
-
 @api_router.get("/")
 async def root():
     return {"message": "DeplyzeGPT API", "status": "ok"}
@@ -311,6 +296,13 @@ async def update_session_route(request: Request, session_id: str, payload: Sessi
     uid = _uid(request)
     _require_session(uid, session_id)
     return update_session(uid, session_id, payload.model_dump(exclude_unset=True))
+
+
+@api_router.post("/sessions/{session_id}/video-indicator/seen")
+async def clear_session_video_indicator_route(request: Request, session_id: str):
+    uid = _uid(request)
+    _require_session(uid, session_id)
+    return clear_session_video_unseen(uid, session_id)
 
 
 @api_router.delete("/sessions/{session_id}")
@@ -624,7 +616,7 @@ async def analyze_image(request: Request, payload: ImageAnalysisRequest):
 
 
 @api_router.post("/analyze/video")
-async def analyze_video(request: Request, payload: VideoAnalysisRequest, background_tasks: BackgroundTasks):
+async def analyze_video(request: Request, payload: VideoAnalysisRequest):
     uid = _uid(request)
     if payload.model == "gemini":
         raise HTTPException(400, "Use /api/analyze/video/gemini for Gemini video analysis")
@@ -647,35 +639,7 @@ async def analyze_video(request: Request, payload: VideoAnalysisRequest, backgro
     if job.get("session_id") != session_id:
         update_job(uid, job_id, {"session_id": session_id})
 
-    if payload.model == LOCATE_MODEL_TYPE:
-        if not _truthy_env("ENABLE_LOCATE_ANYTHING_VIDEO"):
-            raise HTTPException(422, "LocateAnything video analysis is not enabled in this environment.")
-
-        import locate_video_processor
-
-        with tempfile.TemporaryDirectory(prefix="deplyzegpt-locate-video-preflight-") as tmp:
-            input_path, _job = _download_job_input(uid, job_id, Path(tmp))
-            duration_seconds = locate_video_processor.get_video_metadata(str(input_path)).duration_seconds
-            try:
-                locate_video_processor.validate_video_duration(duration_seconds)
-            except locate_video_processor.LocateVideoError as e:
-                message = str(e)
-                update_job(
-                    uid,
-                    job_id,
-                    {
-                        "status": "failed",
-                        "model": payload.model,
-                        "type": "video",
-                        "progress": 100,
-                        "phase": "failed",
-                        "output_url": None,
-                        "error": message[:500],
-                        "session_id": session_id,
-                    },
-                )
-                raise HTTPException(getattr(e, "status_code", 422), message)
-
+    def persist_user_message():
         add_message(
             uid,
             session_id,
@@ -688,6 +652,90 @@ async def analyze_video(request: Request, payload: VideoAnalysisRequest, backgro
                 "model": payload.model,
             },
         )
+
+    def persist_assistant_placeholder():
+        add_message(
+            uid,
+            session_id,
+            {
+                "message_id": _assistant_message_id(job_id),
+                "role": "assistant",
+                "content": "Video queued for processing.",
+                "output_type": "video_job",
+                "job_id": job_id,
+                "model": payload.model,
+            },
+        )
+
+    def mark_preflight_failed(message: str, status_code: int = 422, error_code: Optional[str] = None):
+        update_job(
+            uid,
+            job_id,
+            {
+                "status": "failed",
+                "model": payload.model,
+                "type": "video",
+                "progress": 100,
+                "phase": "failed",
+                "output_url": None,
+                "error": message[:500],
+                "user_message": message[:500],
+                "error_code": error_code,
+                "session_id": session_id,
+                "finished_at": utc_now_iso(),
+                "completed_unseen": True,
+            },
+        )
+        set_session_video_status(uid, session_id, "failed", job_id=job_id, completed_unseen=True)
+        add_message(
+            uid,
+            session_id,
+            {
+                "message_id": _assistant_message_id(job_id),
+                "role": "assistant",
+                "content": message,
+                "output_type": "error",
+                "job_id": job_id,
+                "model": payload.model,
+            },
+        )
+        raise HTTPException(status_code, message)
+
+    def enqueue_or_fail():
+        try:
+            enqueued = enqueue_video_job(uid=uid, session_id=session_id, job_id=job_id)
+        except TaskQueueConfigurationError as e:
+            message = "Video queue is not configured. Please try again later."
+            logger.error("Video queue configuration error: %s", e)
+            mark_preflight_failed(message, 503, "video_queue_not_configured")
+        except TaskQueueEnqueueError as e:
+            message = "Could not queue this video. Please try again."
+            logger.error("Video queue enqueue error: %s", e, exc_info=True)
+            mark_preflight_failed(message, 503, "video_queue_enqueue_failed")
+        update_job(uid, job_id, {"task_name": enqueued.name})
+        return enqueued
+
+    if payload.model == LOCATE_MODEL_TYPE:
+        if not _truthy_env("ENABLE_LOCATE_ANYTHING_VIDEO"):
+            raise HTTPException(422, "LocateAnything video analysis is not enabled in this environment.")
+
+        import locate_video_processor
+
+        persist_user_message()
+        with tempfile.TemporaryDirectory(prefix="deplyzegpt-locate-video-preflight-") as tmp:
+            input_path, _job = _download_job_input(uid, job_id, Path(tmp))
+            metadata = locate_video_processor.get_video_metadata(str(input_path))
+            duration_seconds = metadata.duration_seconds
+            try:
+                locate_video_processor.validate_video_duration(duration_seconds)
+                samples, sampling = locate_video_processor.build_frame_samples(
+                    str(input_path),
+                    duration_seconds,
+                    enforce_frame_cap=True,
+                )
+            except locate_video_processor.LocateVideoError as e:
+                mark_preflight_failed(str(e), getattr(e, "status_code", 422), getattr(e, "error_code", None))
+
         update_job(
             uid,
             job_id,
@@ -697,41 +745,35 @@ async def analyze_video(request: Request, payload: VideoAnalysisRequest, backgro
                 "type": "video",
                 "progress": 0,
                 "phase": "queued",
-                "frame_total": 0,
+                "prompt": payload.prompt,
+                "confidence": payload.confidence,
+                "frame_total": len(samples),
                 "frame_completed": 0,
-                "sampling": {"duration_seconds": round(duration_seconds, 3)},
+                "batch_total": max(1, math.ceil(len(samples) / locate_video_processor.frame_batch_size())),
+                "batch_completed": 0,
+                "analysis_frame_cap": locate_video_processor.max_frames(),
+                "target_p95_seconds": locate_video_processor.target_p95_seconds(),
+                "batch_size": locate_video_processor.frame_batch_size(),
+                "sampling": sampling,
                 "frames": [],
                 "output_url": None,
                 "error": None,
+                "user_message": None,
                 "session_id": session_id,
+                "queued_at": utc_now_iso(),
+                "completed_unseen": False,
             },
         )
-        background_tasks.add_task(_run_locate_video_job, uid, session_id, job_id, payload.prompt)
-        return {"job_id": job_id, "session_id": session_id}
+        persist_assistant_placeholder()
+        set_session_video_status(uid, session_id, "queued", job_id=job_id, completed_unseen=False)
+        enqueue_or_fail()
+        return {"job_id": job_id, "session_id": session_id, "status": "queued"}
 
-    from yolo_service import ClassFilterError, MODEL_MAP, ensure_model_available, resolve_class_filter
+    from yolo_service import ClassFilterError, MODEL_MAP, resolve_class_filter
     if payload.model not in MODEL_MAP:
         raise HTTPException(422, f"Unsupported video model: {payload.model}")
-    try:
-        await asyncio.get_event_loop().run_in_executor(executor, ensure_model_available, payload.model)
-    except Exception:
-        raise HTTPException(
-            422,
-            f"Model {payload.model} could not be downloaded for video processing. Try again later.",
-        )
 
-    add_message(
-        uid,
-        session_id,
-        {
-            "role": "user",
-            "content": payload.prompt,
-            "input_filename": job.get("input_filename"),
-            "input_r2_path": job.get("input_key"),
-            "job_id": job_id,
-            "model": payload.model,
-        },
-    )
+    persist_user_message()
 
     try:
         class_filter = await asyncio.get_event_loop().run_in_executor(
@@ -740,59 +782,11 @@ async def analyze_video(request: Request, payload: VideoAnalysisRequest, backgro
         class_filter_ids = class_filter.ids if class_filter else None
     except ClassFilterError as e:
         message = str(e)
-        update_job(
-            uid,
-            job_id,
-            {
-                "status": "failed",
-                "model": payload.model,
-                "type": "video",
-                "progress": 100,
-                "output_url": None,
-                "error": message[:500],
-                "session_id": session_id,
-            },
-        )
-        add_message(
-            uid,
-            session_id,
-            {
-                "role": "assistant",
-                "content": message,
-                "output_type": "error",
-                "job_id": job_id,
-                "model": payload.model,
-            },
-        )
-        raise HTTPException(422, message)
+        mark_preflight_failed(message, 422, "class_filter_error")
     except Exception as e:
         message = "Analysis failed. Please try again."
-        update_job(
-            uid,
-            job_id,
-            {
-                "status": "failed",
-                "model": payload.model,
-                "type": "video",
-                "progress": 100,
-                "output_url": None,
-                "error": str(e)[:500],
-                "session_id": session_id,
-            },
-        )
-        add_message(
-            uid,
-            session_id,
-            {
-                "role": "assistant",
-                "content": message,
-                "output_type": "error",
-                "job_id": job_id,
-                "model": payload.model,
-            },
-        )
         logger.error("Video class filter resolution failed: %s", e, exc_info=True)
-        raise HTTPException(500, message)
+        mark_preflight_failed(message, 500, "class_filter_failed")
 
     update_job(
         uid,
@@ -802,19 +796,54 @@ async def analyze_video(request: Request, payload: VideoAnalysisRequest, backgro
             "model": payload.model,
             "type": "video",
             "progress": 0,
+            "phase": "queued",
+            "prompt": payload.prompt,
+            "confidence": payload.confidence,
+            "class_filter_ids": class_filter_ids,
             "output_url": None,
             "error": None,
+            "user_message": None,
             "session_id": session_id,
+            "queued_at": utc_now_iso(),
+            "completed_unseen": False,
         },
     )
 
-    background_tasks.add_task(_run_video_job, uid, session_id, job_id, payload.model, payload.confidence, class_filter_ids)
-    return {"job_id": job_id, "session_id": session_id}
+    persist_assistant_placeholder()
+    set_session_video_status(uid, session_id, "queued", job_id=job_id, completed_unseen=False)
+    enqueue_or_fail()
+    return {"job_id": job_id, "session_id": session_id, "status": "queued"}
 
 
 @api_router.get("/analyze/video/status/{job_id}")
 async def get_video_status(request: Request, job_id: str):
     return _job_with_fresh_urls(_require_job(_uid(request), job_id))
+
+
+@api_router.post("/internal/video-jobs/{job_id}/run")
+async def run_internal_video_job_route(request: Request, job_id: str, payload: InternalVideoJobRequest):
+    if payload.job_id != job_id:
+        raise HTTPException(400, "Job id mismatch")
+    try:
+        verify_internal_video_request(
+            request.headers.get("Authorization", ""),
+            request.headers.get("X-Deplyze-Internal-Token"),
+        )
+    except InternalAuthError as exc:
+        raise HTTPException(401, str(exc)) from exc
+
+    retry_count = _task_retry_header(request, "X-CloudTasks-TaskRetryCount")
+    execution_count = _task_retry_header(request, "X-CloudTasks-TaskExecutionCount")
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        executor,
+        run_video_job,
+        payload.uid,
+        payload.session_id,
+        job_id,
+        retry_count,
+        execution_count,
+    )
 
 
 @api_router.post("/analyze/video/gemini")
@@ -876,151 +905,6 @@ async def analyze_video_gemini_route(request: Request, payload: VideoGeminiReque
             update_job(uid, job_id, {"status": "failed", "error": str(e)[:500]})
             logger.error("Gemini video error: %s", e, exc_info=True)
             raise HTTPException(500, "Analysis failed. Please try again.")
-
-
-async def _run_locate_video_job(uid: str, session_id: str, job_id: str, prompt: str):
-    with tempfile.TemporaryDirectory(prefix="deplyzegpt-locate-video-") as tmp:
-        work_dir = Path(tmp)
-        try:
-            import locate_video_processor
-
-            input_path, _job = _download_job_input(uid, job_id, work_dir)
-            output_dir = work_dir / "outputs"
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-            def progress_callback(updates: dict):
-                update_job_sync(uid, job_id, updates)
-
-            loop = asyncio.get_event_loop()
-            result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    executor,
-                    locate_video_processor.process_video_locate,
-                    job_id,
-                    str(input_path),
-                    prompt,
-                    output_dir,
-                    progress_callback,
-                ),
-                timeout=locate_video_processor.job_timeout_seconds(),
-            )
-
-            output_key = _storage_key(uid, session_id, job_id, "outputs", "output.mp4")
-            upload_file(output_key, Path(result["output_path"]), "video/mp4")
-            frames_for_firestore = result.get("frames", [])
-
-            update_job(
-                uid,
-                job_id,
-                {
-                    "status": "done",
-                    "progress": 100,
-                    "phase": "done",
-                    "frame_total": len(frames_for_firestore),
-                    "frame_completed": len(frames_for_firestore),
-                    "sampling": result.get("sampling") or {},
-                    "frames": frames_for_firestore,
-                    "manifest_key": None,
-                    "output_key": output_key,
-                    "output_r2_path": output_key,
-                    "output_url": None,
-                    "error": None,
-                },
-            )
-            add_message(
-                uid,
-                session_id,
-                {
-                    "role": "assistant",
-                    "content": "Processed video is ready.",
-                    "output_type": "video",
-                    "output_r2_path": output_key,
-                    "job_id": job_id,
-                    "model": LOCATE_MODEL_TYPE,
-                    "frames": frames_for_firestore,
-                    "suggestions": ["Refine the target prompt", "Describe this video with Gemini", "Download result"],
-                },
-            )
-        except asyncio.TimeoutError:
-            message = "LocateAnything video processing timeout exceeded"
-            update_job(uid, job_id, {"status": "failed", "phase": "failed", "error": message, "progress": 100})
-            add_message(uid, session_id, {"role": "assistant", "content": message, "output_type": "error", "job_id": job_id, "model": LOCATE_MODEL_TYPE})
-        except Exception as e:
-            logger.error("Locate video job %s failed: %s", job_id, e, exc_info=True)
-            message = str(e)[:500]
-            update_job(uid, job_id, {"status": "failed", "phase": "failed", "error": message, "progress": 100})
-            add_message(uid, session_id, {"role": "assistant", "content": message, "output_type": "error", "job_id": job_id, "model": LOCATE_MODEL_TYPE})
-
-
-async def _run_video_job(uid: str, session_id: str, job_id: str, model_type: str, confidence: float, class_filter_ids=None):
-    with tempfile.TemporaryDirectory(prefix="deplyzegpt-video-") as tmp:
-        work_dir = Path(tmp)
-        try:
-            import video_processor
-
-            input_path, _job = _download_job_input(uid, job_id, work_dir)
-            output_dir = work_dir / "outputs"
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-            os.environ.setdefault("MONGO_URL", "firestore-progress://local")
-            os.environ.setdefault("DB_NAME", "deplyzegpt")
-            video_processor.MongoClient = _build_progress_mongo_client(uid, job_id)
-
-            loop = asyncio.get_event_loop()
-            duration_seconds = _get_video_duration_seconds(str(input_path))
-            timeout_multiplier = 20 if model_type == "yolo26-sem" else 4
-            timeout_floor = 1200 if model_type == "yolo26-sem" else 600
-            timeout_seconds = max(timeout_floor, int(duration_seconds * timeout_multiplier))
-            output_path = await asyncio.wait_for(
-                loop.run_in_executor(
-                    executor,
-                    video_processor.process_video_yolo,
-                    job_id,
-                    str(input_path),
-                    model_type,
-                    confidence,
-                    output_dir,
-                    class_filter_ids,
-                ),
-                timeout=timeout_seconds,
-            )
-
-            output_key = _storage_key(uid, session_id, job_id, "outputs", "output.mp4")
-            upload_file(output_key, Path(output_path), "video/mp4")
-            update_job(
-                uid,
-                job_id,
-                {
-                    "status": "done",
-                    "progress": 100,
-                    "output_key": output_key,
-                    "output_r2_path": output_key,
-                    "output_url": None,
-                    "error": None,
-                },
-            )
-            add_message(
-                uid,
-                session_id,
-                {
-                    "role": "assistant",
-                    "content": "Processed video is ready.",
-                    "output_type": "video",
-                    "output_r2_path": output_key,
-                    "job_id": job_id,
-                    "model": model_type,
-                    "suggestions": ["Analyze frames with Gemini", "Run segmentation", "Download result"],
-                },
-            )
-        except asyncio.TimeoutError:
-            message = "Processing timeout exceeded"
-            update_job(uid, job_id, {"status": "failed", "error": message})
-            add_message(uid, session_id, {"role": "assistant", "content": message, "output_type": "error", "job_id": job_id, "model": model_type})
-        except Exception as e:
-            logger.error("Job %s failed: %s", job_id, e, exc_info=True)
-            message = str(e)[:500]
-            update_job(uid, job_id, {"status": "failed", "error": message})
-            add_message(uid, session_id, {"role": "assistant", "content": message, "output_type": "error", "job_id": job_id, "model": model_type})
 
 
 async def _prewarm_models():

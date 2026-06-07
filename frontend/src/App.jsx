@@ -4,6 +4,7 @@ import { applyActionCode, onAuthStateChanged, sendEmailVerification, signOut } f
 import { CheckCircle2, Loader2, LogOut, MailCheck, RefreshCw, Send } from "lucide-react";
 import Studio from "./components/Studio";
 import AuthPage from "./pages/AuthPage";
+import { Toaster } from "./components/ui/toaster";
 import { ThemeProvider } from "./theme";
 import { auth, initializeAnalytics } from "./firebase";
 import "./App.css";
@@ -276,6 +277,7 @@ export default function App() {
       <BrowserRouter>
         <AppRoutes />
       </BrowserRouter>
+      <Toaster />
     </ThemeProvider>
   );
 }

@@ -141,6 +141,14 @@ def _prediction_url(endpoint: str) -> str:
     return endpoint if endpoint.endswith("/predict") else f"{endpoint}/predict"
 
 
+def _prediction_batch_url(endpoint: str) -> str:
+    if endpoint.endswith("/predict_batch"):
+        return endpoint
+    if endpoint.endswith("/predict"):
+        return f"{endpoint[:-len('/predict')]}/predict_batch"
+    return f"{endpoint}/predict_batch"
+
+
 def _auth_headers(endpoint: str) -> dict:
     headers = {"Content-Type": "application/json"}
     audience = _endpoint_audience()
@@ -264,6 +272,107 @@ def _call_locate_endpoint(
 
     if not isinstance(data, dict) or not data.get("answer"):
         raise LocateProviderError("LocateAnything returned no answer.", status_code=502)
+
+    return data
+
+
+def _call_locate_batch_endpoint(
+    frames: list[dict[str, Any]],
+    prompt: str,
+    generation_mode: str,
+    max_new_tokens: int,
+    timeout_seconds: Optional[int] = None,
+) -> dict[str, Any]:
+    if not is_locate_enabled():
+        raise LocateConfigurationError(
+            "LocateAnything is disabled. Set ENABLE_LOCATE_ANYTHING=true to enable the research preview."
+        )
+
+    endpoint = _endpoint_url()
+    if not endpoint:
+        raise LocateConfigurationError("LocateAnything is not configured. Add LOCATE_ENDPOINT_URL.")
+
+    payload = {
+        "frames": frames,
+        "prompt": prompt,
+        "generation_mode": generation_mode,
+        "max_new_tokens": max_new_tokens,
+    }
+
+    timeout_seconds = max(30, int(timeout_seconds)) if timeout_seconds is not None else _timeout_seconds()
+    retry_delay = _retry_delay_seconds()
+    deadline = time.monotonic() + timeout_seconds
+
+    try:
+        headers = _auth_headers(endpoint)
+    except Exception as exc:
+        logger.error("LocateAnything authentication/setup failed: %s", exc, exc_info=True)
+        raise LocateProviderError("LocateAnything is not available right now. Please try again later.") from exc
+
+    attempt = 0
+    while True:
+        attempt += 1
+        remaining_timeout = max(1, deadline - time.monotonic())
+        try:
+            response = requests.post(
+                _prediction_batch_url(endpoint),
+                json=payload,
+                headers=headers,
+                timeout=remaining_timeout,
+            )
+        except requests.Timeout as exc:
+            raise LocateProviderError("LocateAnything took too long to respond. Please try again.") from exc
+        except requests.RequestException as exc:
+            logger.error("LocateAnything batch request failed: %s", exc, exc_info=True)
+            raise LocateProviderError("LocateAnything is not available right now. Please try again later.") from exc
+
+        if response.status_code not in RETRIABLE_STATUS_CODES:
+            break
+
+        detail = response.text[:300]
+        if time.monotonic() + retry_delay >= deadline:
+            logger.warning(
+                "LocateAnything batch endpoint stayed unavailable after %s attempts; last response %s: %s",
+                attempt,
+                response.status_code,
+                detail,
+            )
+            raise LocateProviderError(
+                "LocateAnything is starting or temporarily busy. Please try again in a moment.",
+                status_code=503,
+            )
+        time.sleep(retry_delay)
+
+    if response.status_code >= 400:
+        detail = response.text[:300]
+        logger.warning("LocateAnything batch endpoint returned %s: %s", response.status_code, detail)
+        if response.status_code == 404 and _truthy_env("LOCATE_BATCH_FALLBACK_TO_SEQUENTIAL"):
+            return {
+                "results": [
+                    {
+                        "frame_id": frame["frame_id"],
+                        **_call_locate_endpoint(
+                            image_b64=frame["image_b64"],
+                            prompt=prompt,
+                            generation_mode=generation_mode,
+                            max_new_tokens=max_new_tokens,
+                            timeout_seconds=timeout_seconds,
+                        ),
+                    }
+                    for frame in frames
+                ],
+                "backend": "sequential-client-fallback",
+                "batch_size": 1,
+            }
+        raise LocateProviderError("LocateAnything batch analysis failed. Please try again later.", status_code=502)
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise LocateProviderError("LocateAnything returned an invalid batch response.", status_code=502) from exc
+
+    if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+        raise LocateProviderError("LocateAnything returned an invalid batch response.", status_code=502)
 
     return data
 
@@ -490,4 +599,65 @@ def analyze_image_locate(
         "stats": result.get("stats"),
         "model": DEFAULT_MODEL_ID,
         "source_filename": Path(file_path).name,
+    }
+
+
+def analyze_images_locate_batch(
+    frames: list[dict[str, Any]],
+    prompt: str,
+    generation_mode: Optional[str] = None,
+    max_new_tokens: Optional[int] = None,
+    timeout_seconds: Optional[int] = None,
+) -> dict[str, Any]:
+    if not frames:
+        return {"results": [], "backend": "none", "batch_size": 0}
+
+    mode = _generation_mode(generation_mode)
+    label = _clean_label(prompt)
+    encoded_frames: list[dict[str, Any]] = []
+    dimensions_by_id: dict[str, tuple[int, int]] = {}
+
+    for frame in frames:
+        frame_id = str(frame.get("frame_id") or frame.get("index") or len(encoded_frames) + 1)
+        image_b64, image = _encode_image_jpeg(str(frame["path"]))
+        height, width = image.shape[:2]
+        dimensions_by_id[frame_id] = (width, height)
+        encoded_frames.append(
+            {
+                "frame_id": frame_id,
+                "image_b64": image_b64,
+                "timestamp_seconds": frame.get("timestamp_seconds"),
+            }
+        )
+
+    result = _call_locate_batch_endpoint(
+        frames=encoded_frames,
+        prompt=prompt or "Locate the most relevant object in this image.",
+        generation_mode=mode,
+        max_new_tokens=_max_new_tokens(max_new_tokens),
+        timeout_seconds=timeout_seconds,
+    )
+
+    parsed_results = []
+    for item in result.get("results") or []:
+        frame_id = str(item.get("frame_id") or "")
+        width, height = dimensions_by_id.get(frame_id, (0, 0))
+        answer = str(item.get("answer") or item.get("raw_answer") or "")
+        detections = parse_locate_output(answer, width, height, label=label) if width and height else []
+        parsed_results.append(
+            {
+                "frame_id": frame_id,
+                "detections": detections,
+                "raw_answer": answer,
+                "generation_mode": item.get("mode") or item.get("generation_mode") or mode,
+                "timings": item.get("timings") or {},
+                "stats": item.get("stats"),
+                "model": item.get("model") or DEFAULT_MODEL_ID,
+            }
+        )
+
+    return {
+        "results": parsed_results,
+        "backend": result.get("backend") or "batch-endpoint",
+        "batch_size": result.get("batch_size") or len(frames),
     }

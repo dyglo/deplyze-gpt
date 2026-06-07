@@ -1,5 +1,7 @@
 # LocateAnything Video Integration Plan
 
+> Superseded by `docs/ASYNC_VIDEO_PROCESSING_PLAN.md` for the production async video architecture, Cloud Tasks dispatch, 48-frame Locate cap, and vLLM/SGLang batch inference path.
+
 ## Summary
 
 LocateAnything video analysis ships as sampled-frame grounding plus full-duration video rendering. The YOLO video path still produces an annotated MP4 through `backend/video_processor.py`; LocateAnything uses `backend/locate_video_processor.py` because a 3B VLM cannot run economically on every video frame.

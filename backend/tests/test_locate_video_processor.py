@@ -76,7 +76,7 @@ def test_extract_sample_frames_falls_back_to_last_decoded_frame_for_tail_metadat
     assert frames[-1]["extraction_fallback"] == "last_decoded_frame"
 
 
-def test_render_full_duration_video_analyzes_each_frame_without_replaying_detections(monkeypatch, tmp_path):
+def test_render_full_duration_video_reuses_nearest_sample_detections(monkeypatch, tmp_path):
     video_path = tmp_path / "input.mp4"
     _write_test_video(video_path, frame_count=3, fps=3.0)
     metadata = locate_video_processor.VideoMetadata(
@@ -86,31 +86,16 @@ def test_render_full_duration_video_analyzes_each_frame_without_replaying_detect
         height=24,
         frame_count=3,
     )
-    per_frame_detections = [
-        [{"kind": "box", "class": "target", "bbox": [4, 4, 20, 18]}],
-        [],
-        [
-            {
-                "kind": "box",
-                "class": "target",
-                "bbox": [8, 6, 24, 20],
-            }
-        ],
-    ]
-
-    analyze_calls = []
-
-    def fake_analyze(file_path, prompt, timeout_seconds=None, **_kwargs):
-        assert Path(file_path).exists()
-        analyze_calls.append((file_path, prompt, timeout_seconds))
-        detections = per_frame_detections[len(analyze_calls) - 1]
-        return {
-            "detections": detections,
-            "raw_answer": "frame answer",
-            "generation_mode": "hybrid",
-            "model": "nvidia/LocateAnything-3B",
-            "timings": {"total_seconds": 0.01},
+    sample_detections = [{"kind": "box", "class": "target", "bbox": [4, 4, 20, 18]}]
+    analyzed_frames = [
+        {
+            "index": 1,
+            "timestamp_seconds": 0.0,
+            "detections": sample_detections,
+            "width": 32,
+            "height": 24,
         }
+    ]
 
     rendered_detections = []
 
@@ -118,16 +103,15 @@ def test_render_full_duration_video_analyzes_each_frame_without_replaying_detect
         rendered_detections.append(list(detections))
         return image.copy()
 
-    monkeypatch.setattr(locate_video_processor, "analyze_image_locate", fake_analyze)
     monkeypatch.setattr(locate_video_processor, "render_locate_annotations", fake_render)
 
-    output_path, frames = locate_video_processor._render_full_duration_video(
+    output_path = locate_video_processor._render_full_duration_video(
         "job-123",
         str(video_path),
-        "locate target",
         metadata,
         1.0,
         tmp_path,
+        analyzed_frames,
     )
     cap = cv2.VideoCapture(output_path)
     try:
@@ -137,10 +121,21 @@ def test_render_full_duration_video_analyzes_each_frame_without_replaying_detect
     finally:
         cap.release()
 
-    assert len(analyze_calls) == 3
-    assert all(call[1] == "locate target" for call in analyze_calls)
-    assert rendered_detections == per_frame_detections
-    assert [frame["detections"] for frame in frames] == per_frame_detections
+    assert rendered_detections == [sample_detections, sample_detections, sample_detections]
+
+
+def test_merge_sampling_can_reject_over_frame_cap():
+    with pytest.raises(locate_video_processor.LocateVideoFrameCapError) as exc:
+        locate_video_processor.merge_sample_timestamps(
+            uniform_timestamps=[0, 5, 10],
+            scene_timestamps=[1, 2, 3, 4, 6, 7],
+            duration_seconds=12,
+            min_gap_seconds=0.1,
+            frame_cap=4,
+            reject_over_cap=True,
+        )
+
+    assert "current limit is 4 analysis frames" in str(exc.value)
 
 
 def test_process_video_locate_writes_mp4_output(monkeypatch, tmp_path):
@@ -150,16 +145,20 @@ def test_process_video_locate_writes_mp4_output(monkeypatch, tmp_path):
     video_path = tmp_path / "input.mp4"
     video_path.write_bytes(b"fake video")
 
-    def fake_render(_job_id, _video_path, prompt, _metadata, _duration_seconds, outputs_dir, _progress_callback=None):
-        assert prompt == "locate people"
+    def fake_render(_job_id, _video_path, _metadata, _duration_seconds, outputs_dir, frames, _progress_callback=None):
+        assert frames[0]["detections"][0]["class"] == "person"
         output_path = outputs_dir / "job-123.mp4"
         output_path.write_bytes(b"fake mp4")
+        return str(output_path)
+
+    def fake_analyze(_raw_frames, prompt, _progress_callback=None):
+        assert prompt == "locate people"
         frames = [
             {
                 "index": 1,
                 "filename": "frame_000001.jpg",
                 "timestamp_seconds": 0.0,
-                "source": "decoded_frame",
+                "source": "uniform",
                 "detections": [{"kind": "box", "class": "person", "bbox": [1, 2, 20, 22]}],
                 "raw_answer": "<box><1><2><20><22></box>",
                 "generation_mode": "hybrid",
@@ -167,13 +166,29 @@ def test_process_video_locate_writes_mp4_output(monkeypatch, tmp_path):
                 "model": "nvidia/LocateAnything-3B",
             }
         ]
-        return str(output_path), frames
+        return frames, {"backend": "test-batch", "batch_size": 3, "batch_total": 1}
 
     monkeypatch.setattr(
         locate_video_processor,
         "get_video_metadata",
         lambda _path: locate_video_processor.VideoMetadata(12.0, 6.0, 32, 24, 72),
     )
+    monkeypatch.setattr(
+        locate_video_processor,
+        "build_frame_samples",
+        lambda _path, _duration=None, enforce_frame_cap=True: (
+            [{"timestamp_seconds": 0.0, "source": "uniform"}],
+            {"strategy": "test", "selected_count": 1},
+        ),
+    )
+    monkeypatch.setattr(
+        locate_video_processor,
+        "extract_sample_frames",
+        lambda _path, _samples, _raw_dir, _metadata=None: [
+            {"index": 1, "raw_path": tmp_path / "source_0001.jpg", "timestamp_seconds": 0.0, "source": "uniform"}
+        ],
+    )
+    monkeypatch.setattr(locate_video_processor, "_analyze_sample_frames", fake_analyze)
     monkeypatch.setattr(locate_video_processor, "_render_full_duration_video", fake_render)
 
     progress = []
@@ -192,4 +207,6 @@ def test_process_video_locate_writes_mp4_output(monkeypatch, tmp_path):
 
     assert result["frames"][0]["timings"]["total_seconds"] == 1.23
     assert "path" not in result["frames"][0]
+    assert result["backend"] == "test-batch"
+    assert result["batch_size"] == 3
     assert progress[-1]["phase"] == "uploading"
