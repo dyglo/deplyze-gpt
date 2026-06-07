@@ -443,53 +443,18 @@ def _even_output_size(width: int, height: int) -> tuple[int, int]:
     return max(2, width - (width % 2)), max(2, height - (height % 2))
 
 
-def detection_intervals(frames: list[dict[str, Any]], duration_seconds: float) -> list[dict[str, Any]]:
-    if not frames:
-        return []
-
-    ordered = sorted(frames, key=lambda frame: float(frame["timestamp_seconds"]))
-    boundaries = [0.0]
-    for previous, current in zip(ordered, ordered[1:]):
-        midpoint = (float(previous["timestamp_seconds"]) + float(current["timestamp_seconds"])) / 2.0
-        boundaries.append(max(boundaries[-1], midpoint))
-    boundaries.append(max(duration_seconds, boundaries[-1]))
-
-    intervals = []
-    for index, frame in enumerate(ordered):
-        intervals.append(
-            {
-                "start": boundaries[index],
-                "end": boundaries[index + 1],
-                "frame": frame,
-            }
-        )
-    return intervals
-
-
-def _detections_for_timestamp(intervals: list[dict[str, Any]], timestamp_seconds: float) -> list[dict]:
-    if not intervals:
-        return []
-
-    for interval in intervals:
-        if timestamp_seconds < interval["end"]:
-            return interval["frame"].get("detections", [])
-    return intervals[-1]["frame"].get("detections", [])
-
-
 def _render_full_duration_video(
     job_id: str,
     video_path: str,
-    frames: list[dict[str, Any]],
+    prompt: str,
     metadata: VideoMetadata,
     duration_seconds: float,
     outputs_dir: Path,
     progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
-) -> str:
-    if not frames:
-        raise LocateVideoError("No LocateAnything frame detections were produced for video output.")
-
+) -> tuple[str, list[dict[str, Any]]]:
     temp_path = outputs_dir / f"{job_id}_raw.avi"
     final_path = outputs_dir / f"{job_id}.mp4"
+    frame_jpeg_path = outputs_dir / f"{job_id}_current_frame.jpg"
     fps = output_fps(metadata.fps)
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -512,9 +477,9 @@ def _render_full_duration_video(
         cap.release()
         raise LocateVideoError("Failed to initialize LocateAnything video writer.", status_code=500)
 
-    intervals = detection_intervals(frames, duration_seconds)
     total_frames = metadata.frame_count or int(max(duration_seconds, 1.0) * fps)
     progress_step = max(1, total_frames // 20)
+    frame_results: list[dict[str, Any]] = []
     frame_index = 0
 
     try:
@@ -524,24 +489,66 @@ def _render_full_duration_video(
                 break
 
             timestamp_seconds = _frame_timestamp_seconds(cap, frame_index, fps)
-            detections = _detections_for_timestamp(intervals, timestamp_seconds)
-            annotated = render_locate_annotations(frame, detections)
-            if (annotated.shape[1], annotated.shape[0]) != (out_width, out_height):
-                annotated = cv2.resize(annotated, (out_width, out_height), interpolation=cv2.INTER_AREA)
+            output_frame = (
+                cv2.resize(frame, (out_width, out_height), interpolation=cv2.INTER_AREA)
+                if (out_width, out_height) != (width, height) else frame
+            )
+
+            _write_jpeg(frame_jpeg_path, output_frame)
+            start = time.perf_counter()
+            result = analyze_image_locate(
+                str(frame_jpeg_path),
+                prompt,
+                timeout_seconds=frame_timeout_seconds(),
+            )
+            elapsed = round(time.perf_counter() - start, 3)
+
+            detections = result.get("detections") or []
+            annotated = render_locate_annotations(output_frame, detections)
 
             out.write(annotated)
             frame_index += 1
+            timings = dict(result.get("timings") or {})
+            timings.setdefault("total_seconds", elapsed)
+            timings["client_total_seconds"] = elapsed
+            frame_results.append(
+                {
+                    "index": frame_index,
+                    "filename": f"frame_{frame_index:06d}.jpg",
+                    "timestamp_seconds": round(timestamp_seconds, 3),
+                    "source": "decoded_frame",
+                    "detections": detections,
+                    "raw_answer": result.get("raw_answer", ""),
+                    "generation_mode": result.get("generation_mode"),
+                    "model": result.get("model"),
+                    "timings": timings,
+                }
+            )
 
             if frame_index % progress_step == 0:
-                raw_progress = 89 + int((frame_index / max(total_frames, 1)) * 5)
-                _update(progress_callback, {"phase": "stitching", "progress": min(raw_progress, 94)})
+                raw_progress = 5 + int((frame_index / max(total_frames, 1)) * 84)
+                _update(
+                    progress_callback,
+                    {
+                        "phase": "analyzing",
+                        "progress": min(raw_progress, 89),
+                        "frame_total": total_frames,
+                        "frame_completed": frame_index,
+                    },
+                )
     finally:
         cap.release()
         out.release()
+        frame_jpeg_path.unlink(missing_ok=True)
 
     if frame_index <= 0 or not temp_path.exists() or temp_path.stat().st_size <= 0:
         temp_path.unlink(missing_ok=True)
         raise LocateVideoError("LocateAnything did not produce any annotated video frames.", status_code=500)
+
+    _update(
+        progress_callback,
+        {"phase": "stitching", "progress": 90, "frame_total": total_frames, "frame_completed": frame_index},
+    )
 
     cmd = [
         "ffmpeg",
@@ -576,7 +583,7 @@ def _render_full_duration_video(
         raise LocateVideoError("FFmpeg did not produce a LocateAnything MP4 output.", status_code=500)
 
     temp_path.unlink(missing_ok=True)
-    return str(final_path)
+    return str(final_path), frame_results
 
 
 def _update(progress_callback: Optional[Callable[[dict[str, Any]], None]], updates: dict[str, Any]) -> None:
@@ -596,72 +603,41 @@ def process_video_locate(
     progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> dict[str, Any]:
     outputs_dir.mkdir(parents=True, exist_ok=True)
-    raw_dir = outputs_dir / "_sampled"
-    raw_dir.mkdir(parents=True, exist_ok=True)
 
-    _update(progress_callback, {"status": "processing", "phase": "sampling", "progress": 3})
+    _update(progress_callback, {"status": "processing", "phase": "probing", "progress": 3})
     metadata = get_video_metadata(video_path)
-    samples, sampling = build_frame_samples(video_path, metadata.duration_seconds)
-    duration_seconds = float(sampling["duration_seconds"])
-    total = len(samples)
+    validate_video_duration(metadata.duration_seconds)
+    duration_seconds = float(metadata.duration_seconds)
+    fps = output_fps(metadata.fps)
+    total_frames = metadata.frame_count or int(max(duration_seconds, 1.0) * fps)
+    sampling = {
+        "strategy": "per_frame",
+        "duration_seconds": round(duration_seconds, 3),
+        "source_fps": round(metadata.fps, 3),
+        "output_fps": round(fps, 3),
+        "frame_count": total_frames,
+    }
     _update(
         progress_callback,
         {
             "status": "processing",
-            "phase": "extracting",
+            "phase": "analyzing",
             "progress": 5,
-            "frame_total": total,
+            "frame_total": total_frames,
             "frame_completed": 0,
             "sampling": sampling,
         },
     )
 
-    raw_frames = extract_sample_frames(video_path, samples, raw_dir, metadata)
-    _update(progress_callback, {"phase": "extracting", "progress": 20})
-
-    frames: list[dict[str, Any]] = []
-    _update(progress_callback, {"phase": "analyzing", "progress": 20, "frame_total": total, "frame_completed": 0})
-    for frame in raw_frames:
-        index = frame["index"]
-        filename = f"source_{index:04d}.jpg"
-        start = time.perf_counter()
-        result = analyze_image_locate(
-            str(frame["raw_path"]),
-            prompt,
-            timeout_seconds=frame_timeout_seconds(),
-        )
-        elapsed = round(time.perf_counter() - start, 3)
-
-        timings = dict(result.get("timings") or {})
-        timings.setdefault("total_seconds", elapsed)
-        timings["client_total_seconds"] = elapsed
-        frame_entry = {
-            "index": index,
-            "filename": filename,
-            "timestamp_seconds": frame["timestamp_seconds"],
-            "extracted_timestamp_seconds": frame.get("extracted_timestamp_seconds"),
-            "extraction_fallback": frame.get("extraction_fallback"),
-            "source": frame["source"],
-            "detections": result.get("detections", []),
-            "raw_answer": result.get("raw_answer", ""),
-            "generation_mode": result.get("generation_mode"),
-            "model": result.get("model"),
-            "timings": timings,
-        }
-        frames.append(frame_entry)
-        analysis_progress = 20 + int((index / total) * 68)
-        _update(
-            progress_callback,
-            {
-                "phase": "analyzing",
-                "progress": min(analysis_progress, 88),
-                "frame_total": total,
-                "frame_completed": index,
-            },
-        )
-
-    _update(progress_callback, {"phase": "stitching", "progress": 89})
-    output_path = _render_full_duration_video(job_id, video_path, frames, metadata, duration_seconds, outputs_dir, progress_callback)
+    output_path, frames = _render_full_duration_video(
+        job_id,
+        video_path,
+        prompt,
+        metadata,
+        duration_seconds,
+        outputs_dir,
+        progress_callback,
+    )
 
     _update(progress_callback, {"phase": "uploading", "progress": 95})
     return {
