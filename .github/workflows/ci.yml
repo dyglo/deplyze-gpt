@@ -405,7 +405,7 @@ jobs:
           REACT_APP_FIREBASE_MEASUREMENT_ID: ${{ secrets.REACT_APP_FIREBASE_MEASUREMENT_ID }}
           REACT_APP_BACKEND_URL: https://deplyzegpt-api-eespme2hdq-ew.a.run.app
           REACT_APP_ENABLE_LOCATE_ANYTHING: true
-          REACT_APP_ENABLE_LOCATE_ANYTHING_VIDEO: ${{ secrets.REACT_APP_ENABLE_LOCATE_ANYTHING_VIDEO }}
+          REACT_APP_ENABLE_LOCATE_ANYTHING_VIDEO: true
         run: npm run build
 
       - name: Deploy Firebase Hosting

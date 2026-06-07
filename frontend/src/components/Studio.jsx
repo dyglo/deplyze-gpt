@@ -13,8 +13,6 @@ import { normalizeSuggestionText } from "../suggestionUtils";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 const ENABLE_LOCATE_ANYTHING = process.env.REACT_APP_ENABLE_LOCATE_ANYTHING === "true";
-const ENABLE_LOCATE_ANYTHING_VIDEO = process.env.REACT_APP_ENABLE_LOCATE_ANYTHING_VIDEO === "true";
-const IMAGE_ONLY_MODELS = new Set(ENABLE_LOCATE_ANYTHING_VIDEO ? [] : ["locate-anything"]);
 
 const BASE_MODELS = [
   { id: "gemini",     label: "Gemini",   desc: "Conversational vision analysis",  icon: Eye },
@@ -172,21 +170,11 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
   const displayName = useMemo(() => user?.displayName || user?.email || "User", [user, profileVersion]);
   const firstName = useMemo(() => displayName.split("@")[0].split(" ")[0] || "there", [displayName]);
   const storageKey = useMemo(() => `deplyzegpt.activeSession.${user.uid}`, [user.uid]);
-  const activeFileForControls = inputFile?.url ? inputFile : contextFile;
-  const disabledModelIds = useMemo(
-    () => activeFileForControls?.file_type === "video" ? ["locate-anything"] : [],
-    [activeFileForControls],
-  );
+  const disabledModelIds = useMemo(() => [], []);
 
   useEffect(() => () => {
     if (jobUnsubscribeRef.current) jobUnsubscribeRef.current();
   }, []);
-
-  useEffect(() => {
-    if (activeFileForControls?.file_type === "video" && IMAGE_ONLY_MODELS.has(selectedModel)) {
-      setSelectedModel("gemini");
-    }
-  }, [activeFileForControls, selectedModel]);
 
   const authHeaders = useCallback(async (extra = {}) => ({
     ...extra,
@@ -313,9 +301,6 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
 
     const objectUrl = URL.createObjectURL(file);
     const isImg = file.type.startsWith("image/") || ["jpg","jpeg","png","webp"].includes(ext);
-    if (!isImg && IMAGE_ONLY_MODELS.has(selectedModel)) {
-      setSelectedModel("gemini");
-    }
     setInputFile({ uploading: true, filename: file.name, size: file.size, objectUrl, file_type: isImg ? "image" : "video" });
     setUploadProgress(0);
     setUploadError("");
@@ -343,7 +328,7 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
       setIsUploading(false);
       setUploadProgress(0);
     }
-  }, [activeSessionId, authHeaders, loadSessions, selectedModel, storageKey]);
+  }, [activeSessionId, authHeaders, loadSessions, storageKey]);
 
   const handleSend = useCallback(async () => {
     const promptText = inputPrompt.trim();
@@ -356,11 +341,6 @@ export default function Studio({ user, onSignOut, onProfileUpdate, profileVersio
     const model   = selectedModel;
     const isVideo = file.file_type === "video";
     const sessionId = activeSessionId || file.session_id || null;
-
-    if (isVideo && IMAGE_ONLY_MODELS.has(model)) {
-      setUploadError("LocateAnything video analysis is not enabled in this environment.");
-      return;
-    }
 
     setInputPrompt("");
     setInputFile(null);
