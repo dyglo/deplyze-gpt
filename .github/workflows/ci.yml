@@ -24,13 +24,6 @@ env:
   CLOUD_RUN_SERVICE: deplyzegpt-api
   CLOUD_RUN_REGION: europe-west1
   ARTIFACT_REGISTRY_REPO: deplyzegpt
-  VIDEO_TASKS_QUEUE: video-processing
-  VIDEO_TASKS_LOCATION: europe-west1
-  VIDEO_TASKS_MAX_CONCURRENT_DISPATCHES: "3"
-  VIDEO_TASKS_MAX_DISPATCHES_PER_SECOND: "3"
-  VIDEO_TASKS_MAX_ATTEMPTS: "3"
-  VIDEO_TASKS_SERVICE_ACCOUNT_EMAIL: deplyzegpt-video-tasks@vision-sys.iam.gserviceaccount.com
-  VIDEO_WORKER_URL: https://deplyzegpt-api-eespme2hdq-ew.a.run.app
 
 jobs:
   backend:
@@ -214,66 +207,6 @@ jobs:
               --quiet
           fi
 
-      - name: Prepare Cloud Tasks queue and IAM
-        run: |
-          set -euo pipefail
-
-          gcloud services enable cloudtasks.googleapis.com --project="$GCP_PROJECT_ID" --quiet
-
-          if ! gcloud iam service-accounts describe "$VIDEO_TASKS_SERVICE_ACCOUNT_EMAIL" \
-            --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
-            gcloud iam service-accounts create deplyzegpt-video-tasks \
-              --project="$GCP_PROJECT_ID" \
-              --display-name="DeplyzeGPT video Cloud Tasks invoker" \
-              --quiet
-          fi
-
-          project_number="$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectNumber)')"
-          runtime_service_account="${project_number}-compute@developer.gserviceaccount.com"
-
-          gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
-            --member="serviceAccount:${runtime_service_account}" \
-            --role="roles/cloudtasks.enqueuer" \
-            --condition=None \
-            --quiet
-
-          gcloud iam service-accounts add-iam-policy-binding "$VIDEO_TASKS_SERVICE_ACCOUNT_EMAIL" \
-            --project="$GCP_PROJECT_ID" \
-            --member="serviceAccount:${runtime_service_account}" \
-            --role="roles/iam.serviceAccountUser" \
-            --quiet
-
-          gcloud run services add-iam-policy-binding "$CLOUD_RUN_SERVICE" \
-            --project="$GCP_PROJECT_ID" \
-            --region="$CLOUD_RUN_REGION" \
-            --member="serviceAccount:${VIDEO_TASKS_SERVICE_ACCOUNT_EMAIL}" \
-            --role="roles/run.invoker" \
-            --quiet
-
-          if ! gcloud tasks queues describe "$VIDEO_TASKS_QUEUE" \
-            --project="$GCP_PROJECT_ID" \
-            --location="$VIDEO_TASKS_LOCATION" >/dev/null 2>&1; then
-            gcloud tasks queues create "$VIDEO_TASKS_QUEUE" \
-              --project="$GCP_PROJECT_ID" \
-              --location="$VIDEO_TASKS_LOCATION" \
-              --max-concurrent-dispatches="$VIDEO_TASKS_MAX_CONCURRENT_DISPATCHES" \
-              --max-dispatches-per-second="$VIDEO_TASKS_MAX_DISPATCHES_PER_SECOND" \
-              --max-attempts="$VIDEO_TASKS_MAX_ATTEMPTS" \
-              --min-backoff=10s \
-              --max-backoff=300s \
-              --quiet
-          else
-            gcloud tasks queues update "$VIDEO_TASKS_QUEUE" \
-              --project="$GCP_PROJECT_ID" \
-              --location="$VIDEO_TASKS_LOCATION" \
-              --max-concurrent-dispatches="$VIDEO_TASKS_MAX_CONCURRENT_DISPATCHES" \
-              --max-dispatches-per-second="$VIDEO_TASKS_MAX_DISPATCHES_PER_SECOND" \
-              --max-attempts="$VIDEO_TASKS_MAX_ATTEMPTS" \
-              --min-backoff=10s \
-              --max-backoff=300s \
-              --quiet
-          fi
-
       - name: Configure Docker for Artifact Registry
         run: |
           set -euo pipefail
@@ -296,33 +229,37 @@ jobs:
           import base64
           import json
           import os
-          import re
           from pathlib import Path
 
-          values = dict(os.environ)
-          values["FIREBASE_SERVICE_ACCOUNT_JSON_B64"] = base64.b64encode(
-              os.environ["FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON"].encode("utf-8")
-          ).decode("ascii")
+          env = {
+              "FIREBASE_SERVICE_ACCOUNT_JSON_B64": base64.b64encode(
+                  os.environ["FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON"].encode("utf-8")
+              ).decode("ascii"),
+              "R2_BUCKET_NAME": os.environ["R2_BUCKET_NAME"],
+              "R2_ENDPOINT_URL": os.environ["R2_ENDPOINT_URL"],
+              "R2_ACCESS_KEY_ID": os.environ["R2_ACCESS_KEY_ID"],
+              "R2_SECRET_ACCESS_KEY": os.environ["R2_SECRET_ACCESS_KEY"],
+              "VERTEX_AI_PROJECT": os.environ["VERTEX_AI_PROJECT"],
+              "VERTEX_AI_LOCATION": os.environ["VERTEX_AI_LOCATION"],
+              "VERTEX_GCS_BUCKET": os.environ["VERTEX_GCS_BUCKET"],
+              "GEMINI_MODEL": os.environ["GEMINI_MODEL"],
+              "FIREBASE_PROJECT_ID": "vision-sys",
+              "GOOGLE_CLOUD_PROJECT": "vision-sys",
+              "GOOGLE_CLOUD_LOCATION": os.environ["VERTEX_AI_LOCATION"],
+              "GCLOUD_PROJECT": "vision-sys",
+              "CORS_ORIGINS": "https://vision-sys.web.app,https://vision-sys.firebaseapp.com,https://deplyzegpt.xyz",
+              "ENABLE_LOCATE_ANYTHING": "true",
+              "ENABLE_LOCATE_ANYTHING_VIDEO": "true",
+              "LOCATE_ENDPOINT_URL": "https://deplyzegpt-locateanything-eespme2hdq-ew.a.run.app",
+              "LOCATE_ENDPOINT_AUDIENCE": "https://deplyzegpt-locateanything-eespme2hdq-ew.a.run.app",
+              "LOCATE_GENERATION_MODE": "hybrid",
+              "LOCATE_TIMEOUT_SECONDS": "600",
+              "LOCATE_MAX_NEW_TOKENS": "8192",
+              "LOCATE_MAX_REQUEST_SIDE": "1024",
+              "LOCATE_RETRY_DELAY_SECONDS": "5",
+          }
 
-          env = {}
-          for raw_line in Path("cloud-run-env.yaml").read_text(encoding="utf-8").splitlines():
-              line = raw_line.strip()
-              if not line or line.startswith("#"):
-                  continue
-              key, raw_value = raw_line.split(":", 1)
-              key = key.strip()
-              value = raw_value.strip()
-              if len(value) >= 2 and value[0] == value[-1] == '"':
-                  value = json.loads(value)
-              match = re.fullmatch(r"\$\{([A-Z0-9_]+)\}", value)
-              if match:
-                  name = match.group(1)
-                  if not values.get(name):
-                      raise RuntimeError(f"Missing value for cloud-run-env.yaml placeholder {name}")
-                  value = values[name]
-              env[key] = value
-
-          Path("cloud-run-env.generated.yaml").write_text(
+          Path("cloud-run-env.yaml").write_text(
               "".join(f"{key}: {json.dumps(value)}\n" for key, value in env.items()),
               encoding="utf-8",
           )
@@ -368,7 +305,7 @@ jobs:
             --max-instances=3 \
             --no-cpu-throttling \
             --cpu-boost \
-            --env-vars-file=cloud-run-env.generated.yaml \
+            --env-vars-file=cloud-run-env.yaml \
             --quiet
 
           cloud_run_url="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
@@ -468,7 +405,7 @@ jobs:
           REACT_APP_FIREBASE_MEASUREMENT_ID: ${{ secrets.REACT_APP_FIREBASE_MEASUREMENT_ID }}
           REACT_APP_BACKEND_URL: https://deplyzegpt-api-eespme2hdq-ew.a.run.app
           REACT_APP_ENABLE_LOCATE_ANYTHING: true
-          REACT_APP_ENABLE_LOCATE_ANYTHING_VIDEO: false
+          REACT_APP_ENABLE_LOCATE_ANYTHING_VIDEO: ${{ secrets.REACT_APP_ENABLE_LOCATE_ANYTHING_VIDEO }}
         run: npm run build
 
       - name: Deploy Firebase Hosting
