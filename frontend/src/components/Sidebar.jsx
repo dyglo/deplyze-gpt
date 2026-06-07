@@ -42,28 +42,8 @@ function formatSessionDate(value) {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
 }
 
-function VideoStatusDot({ status }) {
-  if (!status) return null;
-  const isProcessing = status === "queued" || status === "processing";
-  const title = isProcessing ? "Video processing" : "Video ready";
-  return (
-    <span
-      title={title}
-      aria-label={title}
-      className={`h-2 w-2 flex-none rounded-full ${isProcessing ? "animate-pulse-orange" : ""}`}
-      style={{
-        background: isProcessing ? "var(--accent)" : "#22c55e",
-        boxShadow: isProcessing
-          ? "0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent)"
-          : "0 0 0 3px color-mix(in srgb, #22c55e 16%, transparent)",
-      }}
-    />
-  );
-}
-
 function SessionRow({
   session,
-  videoStatus,
   active,
   collapsed,
   menuOpen,
@@ -88,16 +68,13 @@ function SessionRow({
         type="button"
         onClick={() => onSelect(session.session_id)}
         title={title}
-        className="group relative flex h-10 w-10 items-center justify-center rounded-lg transition"
+        className="group flex h-10 w-10 items-center justify-center rounded-lg transition"
         style={{
           background: active ? "var(--bg-elevated)" : "transparent",
           color: active ? "var(--text-primary)" : "var(--text-muted)",
         }}
       >
         <MessageCircle size={18} />
-        <span className="absolute right-2 top-2">
-          <VideoStatusDot status={videoStatus} />
-        </span>
       </button>
     );
   }
@@ -190,7 +167,6 @@ function SessionRow({
           className="flex h-full min-w-0 flex-1 items-center gap-2 px-3 text-left"
         >
           {session.pinned && <Pin size={13} className="flex-none" style={{ color: "var(--accent)" }} />}
-          <VideoStatusDot status={videoStatus} />
           <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
           <span className="hidden flex-none text-[11px] group-hover:hidden xl:block" style={{ color: "var(--text-faint)" }}>
             {formatSessionDate(session.updated_at)}
@@ -259,7 +235,6 @@ export default function Sidebar({
   onDeleteSession,
   activeView = "chat",
   onSelectView,
-  videoJobsBySession = {},
   onProfileUpdate,
   profileVersion = 0,
 }) {
@@ -424,40 +399,29 @@ export default function Sidebar({
                   No sessions yet
                 </div>
               ) : (
-                sessions.map((session) => {
-                  const liveJob = videoJobsBySession[session.session_id];
-                  const liveStatus = liveJob?.status;
-                  const processing = liveStatus === "queued" || liveStatus === "processing"
-                    || session.video_job_status === "queued"
-                    || session.video_job_status === "processing";
-                  const videoStatus = processing
-                    ? (liveStatus || session.video_job_status)
-                    : (session.video_completed_unseen ? "done" : null);
-                  return (
-                    <SessionRow
-                      key={session.session_id}
-                      session={session}
-                      videoStatus={videoStatus}
-                      active={session.session_id === activeSessionId}
-                      collapsed={collapsed}
-                      menuOpen={menuSessionId === session.session_id}
-                      renaming={renamingSessionId === session.session_id}
-                      confirmingDelete={confirmDeleteSessionId === session.session_id}
-                      onSelect={onSelectSession}
-                      onOpenMenu={(sessionId) => setMenuSessionId((current) => current === sessionId ? null : sessionId)}
-                      onRenameStart={renameStart}
-                      onRenameSave={renameSave}
-                      onRenameCancel={() => setRenamingSessionId(null)}
-                      onTogglePin={async (item) => {
-                        setMenuSessionId(null);
-                        await onTogglePinSession?.(item);
-                      }}
-                      onDeleteStart={deleteStart}
-                      onDeleteCancel={() => setConfirmDeleteSessionId(null)}
-                      onDeleteConfirm={deleteConfirm}
-                    />
-                  );
-                })
+                sessions.map((session) => (
+                  <SessionRow
+                    key={session.session_id}
+                    session={session}
+                    active={session.session_id === activeSessionId}
+                    collapsed={collapsed}
+                    menuOpen={menuSessionId === session.session_id}
+                    renaming={renamingSessionId === session.session_id}
+                    confirmingDelete={confirmDeleteSessionId === session.session_id}
+                    onSelect={onSelectSession}
+                    onOpenMenu={(sessionId) => setMenuSessionId((current) => current === sessionId ? null : sessionId)}
+                    onRenameStart={renameStart}
+                    onRenameSave={renameSave}
+                    onRenameCancel={() => setRenamingSessionId(null)}
+                    onTogglePin={async (item) => {
+                      setMenuSessionId(null);
+                      await onTogglePinSession?.(item);
+                    }}
+                    onDeleteStart={deleteStart}
+                    onDeleteCancel={() => setConfirmDeleteSessionId(null)}
+                    onDeleteConfirm={deleteConfirm}
+                  />
+                ))
               )}
             </div>
           </div>

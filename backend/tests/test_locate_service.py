@@ -167,36 +167,3 @@ def test_call_locate_endpoint_retries_cloud_run_cold_start(monkeypatch):
     assert calls[0][0] == ("https://locate-worker.example/predict",)
     assert calls[0][1]["timeout"] > 0
     assert calls[1][1]["timeout"] > 0
-
-
-def test_analyze_images_locate_batch_parses_frame_results(monkeypatch, tmp_path):
-    image_path = tmp_path / "frame.jpg"
-    cv2.imwrite(str(image_path), np.zeros((100, 200, 3), dtype=np.uint8))
-
-    def fake_batch(**kwargs):
-        assert kwargs["frames"][0]["frame_id"] == "1"
-        assert kwargs["prompt"] == "locate cars"
-        return {
-            "backend": "vllm",
-            "batch_size": 4,
-            "results": [
-                {
-                    "frame_id": "1",
-                    "answer": "<box><100><200><900><800></box>",
-                    "timings": {"total_seconds": 0.25},
-                }
-            ],
-        }
-
-    monkeypatch.setattr(locate_service, "_call_locate_batch_endpoint", fake_batch)
-
-    result = locate_service.analyze_images_locate_batch(
-        [{"frame_id": "1", "path": image_path, "timestamp_seconds": 0.0}],
-        "locate cars",
-    )
-
-    assert result["backend"] == "vllm"
-    assert result["batch_size"] == 4
-    assert result["results"][0]["detections"] == [
-        {"kind": "box", "class": "cars", "bbox": [20.0, 20.0, 180.0, 80.0]}
-    ]

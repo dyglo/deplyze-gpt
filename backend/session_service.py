@@ -65,9 +65,6 @@ def create_session(
         "name": _clean_name(name),
         "model": model or "gemini",
         "pinned": False,
-        "video_job_status": "none",
-        "video_job_ids": [],
-        "video_completed_unseen": False,
         "created_at": now,
         "updated_at": now,
     }
@@ -129,37 +126,6 @@ def touch_session(uid: str, session_id: str, model: Optional[str] = None) -> Non
     if model:
         updates["model"] = model
     session_ref(uid, session_id).update(updates)
-
-
-def set_session_video_status(
-    uid: str,
-    session_id: str,
-    status: str,
-    job_id: Optional[str] = None,
-    completed_unseen: Optional[bool] = None,
-) -> None:
-    updates: Dict[str, Any] = {
-        "video_job_status": status,
-        "updated_at": utc_now_iso(),
-    }
-    if job_id:
-        updates["video_job_ids"] = firestore.ArrayUnion([job_id])
-    if completed_unseen is not None:
-        updates["video_completed_unseen"] = bool(completed_unseen)
-    session_ref(uid, session_id).update(updates)
-
-
-def clear_session_video_unseen(uid: str, session_id: str) -> Dict[str, Any]:
-    session_ref(uid, session_id).update(
-        {
-            "video_completed_unseen": False,
-            "updated_at": utc_now_iso(),
-        }
-    )
-    current = get_session(uid, session_id)
-    if current is None:
-        raise ValueError("Session not found")
-    return current
 
 
 def add_message(uid: str, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
