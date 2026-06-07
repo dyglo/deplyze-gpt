@@ -218,12 +218,30 @@ jobs:
         run: |
           set -euo pipefail
 
+          gcloud services enable cloudtasks.googleapis.com --project="$GCP_PROJECT_ID" --quiet
+
           if ! gcloud iam service-accounts describe "$VIDEO_TASKS_SERVICE_ACCOUNT_EMAIL" \
             --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
-            echo "Missing Cloud Tasks invoker service account: $VIDEO_TASKS_SERVICE_ACCOUNT_EMAIL" >&2
-            echo "Run the one-time Cloud Tasks IAM bootstrap before deploying async video." >&2
-            exit 1
+            gcloud iam service-accounts create deplyzegpt-video-tasks \
+              --project="$GCP_PROJECT_ID" \
+              --display-name="DeplyzeGPT video Cloud Tasks invoker" \
+              --quiet
           fi
+
+          project_number="$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectNumber)')"
+          runtime_service_account="${project_number}-compute@developer.gserviceaccount.com"
+
+          gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
+            --member="serviceAccount:${runtime_service_account}" \
+            --role="roles/cloudtasks.enqueuer" \
+            --condition=None \
+            --quiet
+
+          gcloud iam service-accounts add-iam-policy-binding "$VIDEO_TASKS_SERVICE_ACCOUNT_EMAIL" \
+            --project="$GCP_PROJECT_ID" \
+            --member="serviceAccount:${runtime_service_account}" \
+            --role="roles/iam.serviceAccountUser" \
+            --quiet
 
           gcloud run services add-iam-policy-binding "$CLOUD_RUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
