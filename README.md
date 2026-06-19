@@ -30,25 +30,6 @@
 
 ## Tech Stack
 
-<table>
-  <tr>
-    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/react/react-original.svg" width="40" height="40" alt="React" /><br><sub><b>React</b></sub></td>
-    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/tailwindcss/tailwindcss-original.svg" width="40" height="40" alt="Tailwind" /><br><sub><b>Tailwind</b></sub></td>
-    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg" width="40" height="40" alt="Python" /><br><sub><b>Python</b></sub></td>
-    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/fastapi/fastapi-original.svg" width="40" height="40" alt="FastAPI" /><br><sub><b>FastAPI</b></sub></td>
-    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/firebase/firebase-plain.svg" width="40" height="40" alt="Firebase" /><br><sub><b>Firebase</b></sub></td>
-    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/googlecloud/googlecloud-original.svg" width="40" height="40" alt="GCP" /><br><sub><b>Cloud Run</b></sub></td>
-  </tr>
-  <tr>
-    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/opencv/opencv-original.svg" width="40" height="40" alt="OpenCV" /><br><sub><b>OpenCV</b></sub></td>
-    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/docker/docker-original.svg" width="40" height="40" alt="Docker" /><br><sub><b>Docker</b></sub></td>
-    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/github/github-original.svg" width="40" height="40" alt="GitHub Actions" /><br><sub><b>Actions</b></sub></td>
-    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/nodejs/nodejs-original.svg" width="40" height="40" alt="Node.js" /><br><sub><b>Node.js</b></sub></td>
-    <td align="center" width="96"><img src="https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.svg" width="40" height="40" alt="YOLO" /><br><sub><b>YOLO26</b></sub></td>
-    <td align="center" width="96"><img src="https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690b6.svg" width="40" height="40" alt="Gemini" /><br><sub><b>Gemini</b></sub></td>
-  </tr>
-</table>
-
 <p>
   <img src="https://img.shields.io/badge/React_18-61DAFB?style=flat-square&logo=react&logoColor=black" />
   <img src="https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" />
@@ -177,28 +158,6 @@ Update `.firebaserc` and `firebase.json` with your Firebase project ID and Cloud
 ```bash
 firebase deploy --only firestore:rules --project <your-project-id>
 ```
-
----
-
-## API Reference
-
-All `/api/*` routes require a Firebase bearer token.
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/upload` | Upload image/video to R2 |
-| `POST` | `/api/analyze/image` | Run image analysis (YOLO/Gemini/LocateAnything) |
-| `POST` | `/api/analyze/video` | Start async video analysis |
-| `POST` | `/api/analyze/video/gemini` | Gemini video analysis |
-| `GET` | `/api/analyze/video/status/{job_id}` | Poll video job status |
-| `GET` | `/api/files/{type}/{job_id}/{filename}` | Serve file from R2 |
-| `GET` | `/api/files/presign/{job_id}` | Get presigned output URL |
-| `GET` | `/api/files/download/{job_id}` | Stream output download |
-| `POST` | `/api/sessions` | Create session |
-| `GET` | `/api/sessions` | List user sessions |
-| `PATCH` | `/api/sessions/{session_id}` | Update session |
-| `DELETE` | `/api/sessions/{session_id}` | Delete session |
-| `GET` | `/api/sessions/{session_id}/messages` | List session messages |
 
 ---
 
