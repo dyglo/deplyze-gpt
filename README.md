@@ -4,6 +4,18 @@ DeplyzeGPT is an authenticated computer vision studio for image and video analys
 
 This codebase powers the live product at [deplyzegpt.xyz](https://deplyzegpt.xyz).
 
+## Preview
+
+<p align="center">
+  <img src="docs/screenshots/login.png" width="720" alt="Login screen" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/studio.png" width="720" alt="Studio workspace" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/model-selector.png" width="720" alt="Model selector — YOLO26, YOLO-Seg, YOLO-Sem, Gemini, Locate" />
+</p>
+
 ## Features
 
 - **Multi-model analysis** — YOLO26 detection/segmentation, Gemini multimodal, and LocateAnything-3B visual grounding
