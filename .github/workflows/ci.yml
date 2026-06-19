@@ -20,9 +20,9 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-  FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+  FIREBASE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
-  CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
+  CLOUD_RUN_REGION: europe-west1
   ARTIFACT_REGISTRY_REPO: ${{ vars.ARTIFACT_REGISTRY_REPO }}
 
 jobs:
@@ -136,9 +136,9 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           VERTEX_AI_PROJECT: ${{ vars.GCP_PROJECT_ID }}
-          VERTEX_AI_LOCATION: ${{ vars.VERTEX_AI_LOCATION }}
-          VERTEX_GCS_BUCKET: ${{ vars.VERTEX_GCS_BUCKET }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          VERTEX_AI_LOCATION: global
+          VERTEX_GCS_BUCKET: ${{ vars.GCP_PROJECT_ID }}.firebasestorage.app
+          GEMINI_MODEL: gemini-3-flash-preview
         run: |
           set -euo pipefail
 
@@ -220,9 +220,9 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           VERTEX_AI_PROJECT: ${{ vars.GCP_PROJECT_ID }}
-          VERTEX_AI_LOCATION: ${{ vars.VERTEX_AI_LOCATION }}
-          VERTEX_GCS_BUCKET: ${{ vars.VERTEX_GCS_BUCKET }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          VERTEX_AI_LOCATION: global
+          VERTEX_GCS_BUCKET: ${{ vars.GCP_PROJECT_ID }}.firebasestorage.app
+          GEMINI_MODEL: gemini-3-flash-preview
           CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
           LOCATE_ENDPOINT_URL: ${{ secrets.LOCATE_ENDPOINT_URL }}
           LOCATE_ENDPOINT_AUDIENCE: ${{ secrets.LOCATE_ENDPOINT_AUDIENCE }}
@@ -406,7 +406,7 @@ jobs:
           REACT_APP_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}
           REACT_APP_FIREBASE_APP_ID: ${{ secrets.REACT_APP_FIREBASE_APP_ID }}
           REACT_APP_FIREBASE_MEASUREMENT_ID: ${{ secrets.REACT_APP_FIREBASE_MEASUREMENT_ID }}
-          REACT_APP_BACKEND_URL: ${{ vars.REACT_APP_BACKEND_URL }}
+          REACT_APP_BACKEND_URL: ${{ vars.BACKEND_URL }}
           REACT_APP_ENABLE_LOCATE_ANYTHING: true
           REACT_APP_ENABLE_LOCATE_ANYTHING_VIDEO: true
         run: npm run build

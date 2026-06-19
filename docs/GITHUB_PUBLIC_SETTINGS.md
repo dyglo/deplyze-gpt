@@ -33,18 +33,21 @@ For the `main` branch:
 
 Add these repository variables (non-secret configuration):
 
-| Variable | Example Value |
-|----------|--------------|
-| `GCP_PROJECT_ID` | `your-gcp-project` |
-| `FIREBASE_PROJECT_ID` | `your-gcp-project` |
-| `CLOUD_RUN_SERVICE` | `your-api-service` |
-| `CLOUD_RUN_REGION` | `europe-west1` |
-| `ARTIFACT_REGISTRY_REPO` | `your-registry` |
-| `VERTEX_AI_LOCATION` | `global` |
-| `VERTEX_GCS_BUCKET` | `your-project.firebasestorage.app` |
-| `GEMINI_MODEL` | `gemini-3-flash-preview` |
-| `CORS_ORIGINS` | `https://your-project.web.app,https://deplyzegpt.xyz` |
-| `REACT_APP_BACKEND_URL` | `https://your-api-service-xxxx.a.run.app` |
+| Variable | Example Value | Notes |
+|----------|--------------|-------|
+| `GCP_PROJECT_ID` | `your-gcp-project` | Also used as Firebase project ID, Vertex AI project, and to derive the GCS bucket |
+| `CLOUD_RUN_SERVICE` | `your-api-service` | Cloud Run backend service name |
+| `ARTIFACT_REGISTRY_REPO` | `your-registry` | Docker image registry name |
+| `CORS_ORIGINS` | `https://your-project.web.app,https://your-domain.com` | Comma-separated allowed origins |
+| `BACKEND_URL` | `https://your-api-service-xxxx.a.run.app` | Production backend URL for frontend build |
+
+The following are **derived automatically** in the workflow and do NOT need separate variables:
+- `FIREBASE_PROJECT_ID` → same as `GCP_PROJECT_ID`
+- `VERTEX_AI_PROJECT` → same as `GCP_PROJECT_ID`
+- `VERTEX_GCS_BUCKET` → `{GCP_PROJECT_ID}.firebasestorage.app`
+- `CLOUD_RUN_REGION` → hardcoded `europe-west1`
+- `VERTEX_AI_LOCATION` → hardcoded `global`
+- `GEMINI_MODEL` → hardcoded `gemini-3-flash-preview`
 
 ## 5. Repository Secrets
 
