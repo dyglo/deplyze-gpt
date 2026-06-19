@@ -1,8 +1,18 @@
-# DeplyzeGPT
+<p align="center">
+  <h1 align="center">DeplyzeGPT</h1>
+  <p align="center">
+    <strong>Computer vision, simplified.</strong><br>
+    Analyze images and videos with state-of-the-art AI models — detection, segmentation, and semantic understanding in seconds.
+  </p>
+</p>
 
-DeplyzeGPT is an authenticated computer vision studio for image and video analysis. It combines a conversational React workspace with a FastAPI backend, offering real-time object detection (YOLO26), multimodal AI analysis (Gemini), and open-vocabulary visual grounding (LocateAnything-3B).
+<p align="center">
+  <a href="https://github.com/dyglo/deplyze-gpt/stargazers"><img src="https://img.shields.io/github/stars/dyglo/deplyze-gpt?style=for-the-badge&logo=github&logoColor=white&color=orange" alt="GitHub Stars" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="MIT License" /></a>
+  <a href="https://github.com/dyglo/deplyze-gpt/actions"><img src="https://img.shields.io/github/actions/workflow/status/dyglo/deplyze-gpt/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI" alt="CI Status" /></a>
+</p>
 
-This codebase powers the live product at [deplyzegpt.xyz](https://deplyzegpt.xyz).
+---
 
 ## Preview
 
@@ -16,19 +26,61 @@ This codebase powers the live product at [deplyzegpt.xyz](https://deplyzegpt.xyz
   <img src="docs/screenshots/model-selector.png" width="720" alt="Model selector — YOLO26, YOLO-Seg, YOLO-Sem, Gemini, Locate" />
 </p>
 
+---
+
+## Tech Stack
+
+<table>
+  <tr>
+    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/react/react-original.svg" width="40" height="40" alt="React" /><br><sub><b>React</b></sub></td>
+    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/tailwindcss/tailwindcss-original.svg" width="40" height="40" alt="Tailwind" /><br><sub><b>Tailwind</b></sub></td>
+    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg" width="40" height="40" alt="Python" /><br><sub><b>Python</b></sub></td>
+    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/fastapi/fastapi-original.svg" width="40" height="40" alt="FastAPI" /><br><sub><b>FastAPI</b></sub></td>
+    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/firebase/firebase-plain.svg" width="40" height="40" alt="Firebase" /><br><sub><b>Firebase</b></sub></td>
+    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/googlecloud/googlecloud-original.svg" width="40" height="40" alt="GCP" /><br><sub><b>Cloud Run</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/opencv/opencv-original.svg" width="40" height="40" alt="OpenCV" /><br><sub><b>OpenCV</b></sub></td>
+    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/docker/docker-original.svg" width="40" height="40" alt="Docker" /><br><sub><b>Docker</b></sub></td>
+    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/github/github-original.svg" width="40" height="40" alt="GitHub Actions" /><br><sub><b>Actions</b></sub></td>
+    <td align="center" width="96"><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/nodejs/nodejs-original.svg" width="40" height="40" alt="Node.js" /><br><sub><b>Node.js</b></sub></td>
+    <td align="center" width="96"><img src="https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.svg" width="40" height="40" alt="YOLO" /><br><sub><b>YOLO26</b></sub></td>
+    <td align="center" width="96"><img src="https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690b6.svg" width="40" height="40" alt="Gemini" /><br><sub><b>Gemini</b></sub></td>
+  </tr>
+</table>
+
+<p>
+  <img src="https://img.shields.io/badge/React_18-61DAFB?style=flat-square&logo=react&logoColor=black" />
+  <img src="https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" />
+  <img src="https://img.shields.io/badge/Python_3.14-3776AB?style=flat-square&logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" />
+  <img src="https://img.shields.io/badge/Firebase-DD2C00?style=flat-square&logo=firebase&logoColor=white" />
+  <img src="https://img.shields.io/badge/Cloud_Run-4285F4?style=flat-square&logo=googlecloud&logoColor=white" />
+  <img src="https://img.shields.io/badge/Cloudflare_R2-F38020?style=flat-square&logo=cloudflare&logoColor=white" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white" />
+  <img src="https://img.shields.io/badge/OpenCV-5C3EE8?style=flat-square&logo=opencv&logoColor=white" />
+  <img src="https://img.shields.io/badge/YOLO26-00FFFF?style=flat-square&logo=ultralytics&logoColor=black" />
+  <img src="https://img.shields.io/badge/Gemini-8E75B2?style=flat-square&logo=googlegemini&logoColor=white" />
+  <img src="https://img.shields.io/badge/GitHub_Actions-2088FF?style=flat-square&logo=githubactions&logoColor=white" />
+</p>
+
+---
+
 ## Features
 
 - **Multi-model analysis** — YOLO26 detection/segmentation, Gemini multimodal, and LocateAnything-3B visual grounding
-- **Conversational UI** — Claude-style chat workspace with persistent named sessions
+- **Conversational UI** — chat workspace with persistent named sessions
 - **Firebase Auth** — email/password authentication with email verification
 - **Cloud storage** — uploads and outputs stored in Cloudflare R2 with presigned URLs
 - **Session history** — full conversation persistence in Firestore with multi-turn restore
 - **Video processing** — async video analysis pipeline with progress tracking
 - **Smart class filtering** — natural-language YOLO class selection via Gemini
 
+---
+
 ## Architecture
 
-```text
+```
 frontend/          React + CRA + Tailwind + shadcn/ui
                    Firebase client SDK for auth
                    Studio chat UI with sidebar sessions
@@ -46,20 +98,11 @@ infrastructure/    Firebase Hosting (frontend)
                    Cloudflare R2 (file storage)
 ```
 
-## Tech Stack
+---
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18, Create React App, Tailwind CSS, shadcn/ui, Firebase JS SDK |
-| Backend | Python 3.14, FastAPI, Uvicorn, OpenCV, Ultralytics YOLO26 |
-| AI/ML | Google Gemini (Vertex AI), YOLO26n (det/seg/sem), nvidia/LocateAnything-3B |
-| Auth | Firebase Authentication (email/password) |
-| Database | Cloud Firestore |
-| Storage | Cloudflare R2 (S3-compatible) |
-| Hosting | Firebase Hosting (frontend), Google Cloud Run (backend) |
-| CI/CD | GitHub Actions |
+## Getting Started
 
-## Prerequisites
+### Prerequisites
 
 - Python 3.11+ (3.14 recommended)
 - Node.js 20+ (24 recommended)
@@ -68,34 +111,30 @@ infrastructure/    Firebase Hosting (frontend)
 - A Cloudflare R2 bucket with S3-compatible API credentials
 - FFmpeg on PATH (for video output workflows)
 
-## Setup
-
-### 1. Clone the repository
+### 1. Clone
 
 ```bash
-git clone https://github.com/dyglo/vision-language.git
-cd vision-language
+git clone https://github.com/dyglo/deplyze-gpt.git
+cd deplyze-gpt
 ```
 
-### 2. Configure environment variables
-
-Copy the example environment file and fill in your values:
+### 2. Environment Variables
 
 ```bash
 cp .env.example backend/.env
 ```
 
-See [`.env.example`](.env.example) for the full list of required variables. Key variables:
+See [`.env.example`](.env.example) for the full list. Key variables:
 
 | Variable | Description |
 |----------|-------------|
 | `R2_BUCKET_NAME` | Your Cloudflare R2 bucket name |
-| `R2_ENDPOINT_URL` | R2 S3-compatible endpoint (`https://<account_id>.r2.cloudflarestorage.com`) |
+| `R2_ENDPOINT_URL` | R2 S3-compatible endpoint |
 | `R2_ACCESS_KEY_ID` | R2 access key |
 | `R2_SECRET_ACCESS_KEY` | R2 secret key |
-| `FIREBASE_SERVICE_ACCOUNT_PATH` | Path to your Firebase Admin service account JSON |
+| `FIREBASE_SERVICE_ACCOUNT_PATH` | Path to Firebase Admin service account JSON |
 | `VERTEX_AI_PROJECT` | Your GCP project ID |
-| `VERTEX_GCS_BUCKET` | Your Firebase Storage bucket (`<project>.firebasestorage.app`) |
+| `VERTEX_GCS_BUCKET` | Firebase Storage bucket (`<project>.firebasestorage.app`) |
 | `GEMINI_MODEL` | Gemini model name (e.g. `gemini-3-flash-preview`) |
 
 For the frontend, create `frontend/.env`:
@@ -111,7 +150,7 @@ REACT_APP_FIREBASE_MEASUREMENT_ID=<measurement-id>
 REACT_APP_BACKEND_URL=http://127.0.0.1:8000
 ```
 
-### 3. Install and run the backend
+### 3. Backend
 
 ```bash
 cd backend
@@ -119,9 +158,9 @@ pip install -r requirements.txt
 uvicorn server:app --host 127.0.0.1 --port 8000
 ```
 
-YOLO weights (`yolo26n.pt`, `yolo26n-seg.pt`, `yolo26n-sem.pt`) are downloaded automatically on first use.
+YOLO weights (`yolo26n.pt`, `yolo26n-seg.pt`, `yolo26n-sem.pt`) download automatically on first use.
 
-### 4. Install and run the frontend
+### 4. Frontend
 
 ```bash
 cd frontend
@@ -129,19 +168,19 @@ npm install --legacy-peer-deps
 npm start
 ```
 
-The app opens at `http://localhost:3000`.
+Opens at `http://localhost:3000`.
 
-### 5. Configure Firebase
+### 5. Firebase
 
-Update `.firebaserc` and `firebase.json` with your Firebase project ID and Cloud Run service name before deploying.
-
-Deploy Firestore rules:
+Update `.firebaserc` and `firebase.json` with your Firebase project ID and Cloud Run service name, then deploy rules:
 
 ```bash
 firebase deploy --only firestore:rules --project <your-project-id>
 ```
 
-## API Routes
+---
+
+## API Reference
 
 All `/api/*` routes require a Firebase bearer token.
 
@@ -161,20 +200,7 @@ All `/api/*` routes require a Firebase bearer token.
 | `DELETE` | `/api/sessions/{session_id}` | Delete session |
 | `GET` | `/api/sessions/{session_id}/messages` | List session messages |
 
-## Firestore Data Model
-
-```text
-sessions/{uid}/items/{session_id}
-  name, model, pinned, created_at, updated_at
-
-sessions/{uid}/items/{session_id}/messages/{message_id}
-  role, content, input_r2_path, output_r2_path, output_type, job_id, model
-
-jobs/{uid}/items/{job_id}
-  type, status, progress, input_key, output_key, session_id
-```
-
-Per-user access is enforced in `firestore.rules`.
+---
 
 ## Deployment
 
@@ -186,7 +212,21 @@ The CI/CD pipeline (`.github/workflows/ci.yml`) handles:
 4. Backend deployment to Cloud Run (on push to `main`)
 5. Frontend deployment to Firebase Hosting (on push to `main`)
 
-All infrastructure identifiers are supplied via GitHub Actions secrets and repository variables. See the workflow file for the full list of required secrets/variables.
+### Required Repository Variables
+
+The CD pipeline requires these **5 GitHub Actions repository variables** to deploy. If you fork this repo, set these for your own infrastructure:
+
+| Variable | Purpose |
+|----------|---------|
+| `GCP_PROJECT_ID` | GCP/Firebase project ID (also derives Vertex AI project + GCS bucket) |
+| `CLOUD_RUN_SERVICE` | Cloud Run backend service name |
+| `ARTIFACT_REGISTRY_REPO` | Docker Artifact Registry repository name |
+| `CORS_ORIGINS` | Comma-separated allowed CORS origins |
+| `BACKEND_URL` | Production backend URL for frontend build |
+
+Additional secrets (GCP service account, R2 credentials, Firebase config) must also be configured — see [`docs/GITHUB_PUBLIC_SETTINGS.md`](docs/GITHUB_PUBLIC_SETTINGS.md) for the full checklist.
+
+---
 
 ## License
 
