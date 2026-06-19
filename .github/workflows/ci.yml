@@ -19,11 +19,11 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  GCP_PROJECT_ID: vision-sys
-  FIREBASE_PROJECT_ID: vision-sys
-  CLOUD_RUN_SERVICE: deplyzegpt-api
-  CLOUD_RUN_REGION: europe-west1
-  ARTIFACT_REGISTRY_REPO: deplyzegpt
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+  CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+  CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
+  ARTIFACT_REGISTRY_REPO: ${{ vars.ARTIFACT_REGISTRY_REPO }}
 
 jobs:
   backend:
@@ -135,15 +135,15 @@ jobs:
           R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          VERTEX_AI_PROJECT: vision-sys
-          VERTEX_AI_LOCATION: global
-          VERTEX_GCS_BUCKET: vision-sys.firebasestorage.app
-          GEMINI_MODEL: gemini-3-flash-preview
+          VERTEX_AI_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          VERTEX_AI_LOCATION: ${{ vars.VERTEX_AI_LOCATION }}
+          VERTEX_GCS_BUCKET: ${{ vars.VERTEX_GCS_BUCKET }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
         run: |
           set -euo pipefail
 
-          test "$GCP_PROJECT_ID" = "vision-sys"
-          test "$FIREBASE_PROJECT_ID" = "vision-sys"
+          test -n "$GCP_PROJECT_ID"
+          test -n "$FIREBASE_PROJECT_ID"
 
           blocked_project="deplyze-""quant"
           if grep -R "$blocked_project" .github/workflows firebase.json .firebaserc; then
@@ -188,8 +188,8 @@ jobs:
           gcloud config set project "$GCP_PROJECT_ID"
           active_project="$(gcloud config get-value project)"
 
-          if [ "$active_project" != "vision-sys" ]; then
-            echo "Refusing to deploy outside vision-sys." >&2
+          if [ "$active_project" != "$GCP_PROJECT_ID" ]; then
+            echo "Refusing to deploy outside configured project." >&2
             exit 1
           fi
 
@@ -219,10 +219,13 @@ jobs:
           R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          VERTEX_AI_PROJECT: vision-sys
-          VERTEX_AI_LOCATION: global
-          VERTEX_GCS_BUCKET: vision-sys.firebasestorage.app
-          GEMINI_MODEL: gemini-3-flash-preview
+          VERTEX_AI_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          VERTEX_AI_LOCATION: ${{ vars.VERTEX_AI_LOCATION }}
+          VERTEX_GCS_BUCKET: ${{ vars.VERTEX_GCS_BUCKET }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+          LOCATE_ENDPOINT_URL: ${{ secrets.LOCATE_ENDPOINT_URL }}
+          LOCATE_ENDPOINT_AUDIENCE: ${{ secrets.LOCATE_ENDPOINT_AUDIENCE }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -243,15 +246,15 @@ jobs:
               "VERTEX_AI_LOCATION": os.environ["VERTEX_AI_LOCATION"],
               "VERTEX_GCS_BUCKET": os.environ["VERTEX_GCS_BUCKET"],
               "GEMINI_MODEL": os.environ["GEMINI_MODEL"],
-              "FIREBASE_PROJECT_ID": "vision-sys",
-              "GOOGLE_CLOUD_PROJECT": "vision-sys",
+              "FIREBASE_PROJECT_ID": os.environ.get("FIREBASE_PROJECT_ID", ""),
+              "GOOGLE_CLOUD_PROJECT": os.environ.get("GCP_PROJECT_ID", ""),
               "GOOGLE_CLOUD_LOCATION": os.environ["VERTEX_AI_LOCATION"],
-              "GCLOUD_PROJECT": "vision-sys",
-              "CORS_ORIGINS": "https://vision-sys.web.app,https://vision-sys.firebaseapp.com,https://deplyzegpt.xyz",
+              "GCLOUD_PROJECT": os.environ.get("GCP_PROJECT_ID", ""),
+              "CORS_ORIGINS": os.environ.get("CORS_ORIGINS", ""),
               "ENABLE_LOCATE_ANYTHING": "true",
               "ENABLE_LOCATE_ANYTHING_VIDEO": "true",
-              "LOCATE_ENDPOINT_URL": "https://deplyzegpt-locateanything-eespme2hdq-ew.a.run.app",
-              "LOCATE_ENDPOINT_AUDIENCE": "https://deplyzegpt-locateanything-eespme2hdq-ew.a.run.app",
+              "LOCATE_ENDPOINT_URL": os.environ.get("LOCATE_ENDPOINT_URL", ""),
+              "LOCATE_ENDPOINT_AUDIENCE": os.environ.get("LOCATE_ENDPOINT_AUDIENCE", ""),
               "LOCATE_GENERATION_MODE": "hybrid",
               "LOCATE_TIMEOUT_SECONDS": "600",
               "LOCATE_MAX_NEW_TOKENS": "8192",
@@ -345,9 +348,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          test "$GCP_PROJECT_ID" = "vision-sys"
-          test "$FIREBASE_PROJECT_ID" = "vision-sys"
-          test "$REACT_APP_FIREBASE_PROJECT_ID" = "vision-sys"
+          test -n "$GCP_PROJECT_ID"
+          test -n "$FIREBASE_PROJECT_ID"
+          test -n "$REACT_APP_FIREBASE_PROJECT_ID"
 
           blocked_project="deplyze-""quant"
           if grep -R "$blocked_project" .github/workflows firebase.json .firebaserc; then
@@ -403,7 +406,7 @@ jobs:
           REACT_APP_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}
           REACT_APP_FIREBASE_APP_ID: ${{ secrets.REACT_APP_FIREBASE_APP_ID }}
           REACT_APP_FIREBASE_MEASUREMENT_ID: ${{ secrets.REACT_APP_FIREBASE_MEASUREMENT_ID }}
-          REACT_APP_BACKEND_URL: https://deplyzegpt-api-eespme2hdq-ew.a.run.app
+          REACT_APP_BACKEND_URL: ${{ vars.REACT_APP_BACKEND_URL }}
           REACT_APP_ENABLE_LOCATE_ANYTHING: true
           REACT_APP_ENABLE_LOCATE_ANYTHING_VIDEO: true
         run: npm run build
@@ -419,6 +422,6 @@ jobs:
       - name: Report deployment URLs
         run: |
           set -euo pipefail
-          echo "Firebase Hosting URL: https://vision-sys.web.app"
+          echo "Firebase Hosting URL: https://${FIREBASE_PROJECT_ID}.web.app"
           echo "Cloud Run URL: ${{ needs.deploy-backend.outputs.cloud_run_url }}"
           echo "Artifact Registry image: ${{ needs.deploy-backend.outputs.image }}"

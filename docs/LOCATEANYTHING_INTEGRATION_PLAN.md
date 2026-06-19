@@ -10,7 +10,7 @@ LocateAnything differs from the existing YOLO models because it performs open-vo
 
 Use a separate Google Cloud Run GPU service in `europe-west1`:
 
-- Service name: `deplyzegpt-locateanything`
+- Service name: `<your-locate-service>`
 - GPU: 1x NVIDIA L4, 24 GB VRAM
 - CPU/memory: 4 vCPU, 16 GiB minimum
 - Billing/scaling: instance-based billing, min instances `0`, max instances `1`, concurrency `1`, timeout `600s`, no GPU zonal redundancy for v1
@@ -30,7 +30,7 @@ flowchart LR
   FE --> API["Cloud Run CPU API /api/analyze/image"]
   API --> R2["Cloudflare R2 uploads"]
   API --> LSvc["backend/locate_service.py"]
-  LSvc --> GPU["Cloud Run GPU worker: deplyzegpt-locateanything"]
+  LSvc --> GPU["Cloud Run GPU worker"]
   GPU --> LModel["nvidia/LocateAnything-3B on L4"]
   LSvc --> Annotated["Annotated JPEG + detections"]
   API --> R2Out["R2 outputs"]
