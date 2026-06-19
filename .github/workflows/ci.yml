@@ -19,11 +19,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-  FIREBASE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-  CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
   CLOUD_RUN_REGION: europe-west1
-  ARTIFACT_REGISTRY_REPO: ${{ vars.ARTIFACT_REGISTRY_REPO }}
 
 jobs:
   backend:
@@ -113,12 +109,18 @@ jobs:
     name: Deploy Backend to Cloud Run
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    environment: production
     needs:
       - backend
       - frontend
       - workflow-lint
       - secret-scan
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      FIREBASE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      ARTIFACT_REGISTRY_REPO: ${{ vars.ARTIFACT_REGISTRY_REPO }}
     outputs:
       cloud_run_url: ${{ steps.deploy.outputs.cloud_run_url }}
       image: ${{ steps.image.outputs.image }}
@@ -327,9 +329,13 @@ jobs:
     name: Deploy Frontend to Firebase Hosting
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    environment: production
     needs:
       - deploy-backend
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      FIREBASE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
 
     steps:
       - name: Checkout

@@ -27,11 +27,13 @@ For the `main` branch:
 - [ ] Require status checks to pass (select: `Backend Quality`, `Frontend Build`, `Workflow Lint`, `Secret Scan`)
 - [ ] Do not allow bypassing the above settings
 
-## 4. Repository Variables
+## 4. Environment + Variables
 
-**Path:** Settings > Secrets and variables > Actions > Variables tab
+The deploy jobs reference an environment named **`production`**. Create it at:
 
-Add these repository variables (non-secret configuration):
+**Path:** Settings > Environments > New environment > Name: `production`
+
+Then add these variables either at **repository level** (Settings > Secrets and variables > Actions > Variables tab) or inside the `production` environment (both work since the deploy jobs declare `environment: production`):
 
 | Variable | Example Value | Notes |
 |----------|--------------|-------|
