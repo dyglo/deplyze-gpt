@@ -6,7 +6,7 @@
     "rules": "storage.rules"
   },
   "hosting": {
-    "site": "vision-sys",
+    "site": "your-firebase-project",
     "public": "frontend/build",
     "ignore": [
       "firebase.json",
@@ -17,7 +17,7 @@
       {
         "source": "/api/**",
         "run": {
-          "serviceId": "deplyzegpt-api",
+          "serviceId": "your-cloud-run-service",
           "region": "europe-west1"
         }
       },

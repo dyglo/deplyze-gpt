@@ -9,7 +9,7 @@ Authentication -> Templates -> Email address verification
 Set the custom action URL to:
 
 ```text
-https://deplyzegpt.xyz/verified
+https://your-domain.com/verified
 ```
 
 Firebase appends `mode` and `oobCode` to this URL. The React `/verified` route applies the verification code and then renders the branded confirmation page.

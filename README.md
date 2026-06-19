@@ -1,113 +1,95 @@
 # DeplyzeGPT
 
-DeplyzeGPT is an authenticated computer vision studio for image and video analysis. It combines a Claude-style React workspace, a FastAPI backend, Firebase Auth, Firestore session history, Cloudflare R2 object storage, Gemini multimodal analysis, and YOLO26 detection/segmentation models.
+DeplyzeGPT is an authenticated computer vision studio for image and video analysis. It combines a conversational React workspace with a FastAPI backend, offering real-time object detection (YOLO26), multimodal AI analysis (Gemini), and open-vocabulary visual grounding (LocateAnything-3B).
 
-## Current Capabilities
+This codebase powers the live product at [deplyzegpt.xyz](https://deplyzegpt.xyz).
 
-- Firebase-authenticated Studio UI.
-- Image and video uploads streamed to Cloudflare R2.
-- Upload progress in the frontend.
-- Persistent named sessions stored per user in Firestore.
-- Sidebar session list with newest-first ordering, pinned sessions, rename, pin/unpin, and delete.
-- Full multi-turn conversation restore from Firestore.
-- Fresh one-hour R2 presigned URLs generated when session messages are read.
-- Gemini image and video analysis with Vertex AI `gemini-3-flash-preview`.
-- YOLO26 object detection, instance segmentation, and semantic segmentation.
-- Firestore-backed video job status updates.
+## Features
+
+- **Multi-model analysis** — YOLO26 detection/segmentation, Gemini multimodal, and LocateAnything-3B visual grounding
+- **Conversational UI** — Claude-style chat workspace with persistent named sessions
+- **Firebase Auth** — email/password authentication with email verification
+- **Cloud storage** — uploads and outputs stored in Cloudflare R2 with presigned URLs
+- **Session history** — full conversation persistence in Firestore with multi-turn restore
+- **Video processing** — async video analysis pipeline with progress tracking
+- **Smart class filtering** — natural-language YOLO class selection via Gemini
 
 ## Architecture
 
 ```text
-frontend/
-  React + CRA + Firebase client SDK
-  Auth, Studio chat UI, persistent sidebar sessions
+frontend/          React + CRA + Tailwind + shadcn/ui
+                   Firebase client SDK for auth
+                   Studio chat UI with sidebar sessions
 
-backend/
-  FastAPI
-  Firebase Admin auth middleware
-  Firestore job/session persistence
-  Cloudflare R2 object storage
-  Gemini and YOLO analysis routes
+backend/           FastAPI (Python)
+                   Firebase Admin auth middleware
+                   Firestore session/job persistence
+                   Cloudflare R2 object storage (S3-compatible)
+                   Gemini (Vertex AI) and YOLO26 analysis
+                   LocateAnything-3B GPU worker integration
 
-firestore.rules
-  Per-user access for jobs and sessions
+infrastructure/    Firebase Hosting (frontend)
+                   Cloud Run (backend API + GPU workers)
+                   Firestore (data)
+                   Cloudflare R2 (file storage)
 ```
 
-## Data Model
+## Tech Stack
 
-Firestore session documents:
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 18, Create React App, Tailwind CSS, shadcn/ui, Firebase JS SDK |
+| Backend | Python 3.14, FastAPI, Uvicorn, OpenCV, Ultralytics YOLO26 |
+| AI/ML | Google Gemini (Vertex AI), YOLO26n (det/seg/sem), nvidia/LocateAnything-3B |
+| Auth | Firebase Authentication (email/password) |
+| Database | Cloud Firestore |
+| Storage | Cloudflare R2 (S3-compatible) |
+| Hosting | Firebase Hosting (frontend), Google Cloud Run (backend) |
+| CI/CD | GitHub Actions |
 
-```text
-sessions/{uid}/items/{session_id}
-  name
-  model
-  pinned
-  created_at
-  updated_at
+## Prerequisites
+
+- Python 3.11+ (3.14 recommended)
+- Node.js 20+ (24 recommended)
+- A Firebase project with Authentication and Firestore enabled
+- A Firebase service account JSON with Vertex AI access
+- A Cloudflare R2 bucket with S3-compatible API credentials
+- FFmpeg on PATH (for video output workflows)
+
+## Setup
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/dyglo/vision-language.git
+cd vision-language
 ```
 
-Firestore message documents:
+### 2. Configure environment variables
 
-```text
-sessions/{uid}/items/{session_id}/messages/{message_id}
-  role
-  content
-  input_filename
-  input_r2_path
-  output_r2_path
-  output_type
-  job_id
-  model
-  created_at
+Copy the example environment file and fill in your values:
+
+```bash
+cp .env.example backend/.env
 ```
 
-Firestore job documents:
+See [`.env.example`](.env.example) for the full list of required variables. Key variables:
 
-```text
-jobs/{uid}/items/{job_id}
-```
+| Variable | Description |
+|----------|-------------|
+| `R2_BUCKET_NAME` | Your Cloudflare R2 bucket name |
+| `R2_ENDPOINT_URL` | R2 S3-compatible endpoint (`https://<account_id>.r2.cloudflarestorage.com`) |
+| `R2_ACCESS_KEY_ID` | R2 access key |
+| `R2_SECRET_ACCESS_KEY` | R2 secret key |
+| `FIREBASE_SERVICE_ACCOUNT_PATH` | Path to your Firebase Admin service account JSON |
+| `VERTEX_AI_PROJECT` | Your GCP project ID |
+| `VERTEX_GCS_BUCKET` | Your Firebase Storage bucket (`<project>.firebasestorage.app`) |
+| `GEMINI_MODEL` | Gemini model name (e.g. `gemini-3-flash-preview`) |
 
-R2 object paths are stored in Firestore. Presigned URLs are never stored; the backend creates fresh read URLs when messages or outputs are requested.
-
-## Requirements
-
-- Windows PowerShell, or equivalent shell with command adjustments.
-- Python available at `C:\Python314\python.exe` for the current local setup.
-- Node.js and npm.
-- Firebase project with Auth and Firestore enabled.
-- Firebase service account JSON in the repo root, or `FIREBASE_SERVICE_ACCOUNT_PATH` pointing to it.
-- Cloudflare R2 bucket and S3-compatible access keys.
-- Gemini API key.
-- FFmpeg on `PATH` for video output workflows.
-
-YOLO weights are expected in `backend/` or downloaded on first use:
-
-- `yolo26n.pt`
-- `yolo26n-seg.pt`
-- `yolo26n-sem.pt`
-
-## Environment
-
-Create `backend/.env`:
+For the frontend, create `frontend/.env`:
 
 ```dotenv
-R2_BUCKET_NAME=deplyzegpt-storage
-R2_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com
-R2_ACCESS_KEY_ID=<r2-access-key-id>
-R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
-
-FIREBASE_SERVICE_ACCOUNT_PATH=../vision-sys-firebase-adminsdk-example.json
-
-VERTEX_AI_PROJECT=vision-sys
-VERTEX_AI_LOCATION=global
-VERTEX_GCS_BUCKET=vision-sys.firebasestorage.app
-GEMINI_MODEL=gemini-3-flash-preview
-```
-
-Create `frontend/.env`:
-
-```dotenv
-REACT_APP_FIREBASE_API_KEY=<firebase-web-api-key>
+REACT_APP_FIREBASE_API_KEY=<your-firebase-web-api-key>
 REACT_APP_FIREBASE_AUTH_DOMAIN=<project>.firebaseapp.com
 REACT_APP_FIREBASE_PROJECT_ID=<project>
 REACT_APP_FIREBASE_STORAGE_BUCKET=<project>.firebasestorage.app
@@ -117,107 +99,83 @@ REACT_APP_FIREBASE_MEASUREMENT_ID=<measurement-id>
 REACT_APP_BACKEND_URL=http://127.0.0.1:8000
 ```
 
-Do not commit real `.env` files, Firebase service account JSON, R2 keys, or API keys.
+### 3. Install and run the backend
 
-## Start Locally
-
-Backend:
-
-```powershell
-cd D:\code\vision-language\backend
-C:\Python314\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8000
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn server:app --host 127.0.0.1 --port 8000
 ```
 
-Frontend:
+YOLO weights (`yolo26n.pt`, `yolo26n-seg.pt`, `yolo26n-sem.pt`) are downloaded automatically on first use.
 
-```powershell
-cd D:\code\vision-language\frontend
+### 4. Install and run the frontend
+
+```bash
+cd frontend
 npm install --legacy-peer-deps
 npm start
 ```
 
-Open the frontend URL shown by CRA, usually:
+The app opens at `http://localhost:3000`.
 
-```text
-http://localhost:3000
+### 5. Configure Firebase
+
+Update `.firebaserc` and `firebase.json` with your Firebase project ID and Cloud Run service name before deploying.
+
+Deploy Firestore rules:
+
+```bash
+firebase deploy --only firestore:rules --project <your-project-id>
 ```
-
-If CRA asks to use `3001`, accept it. The backend allows both `localhost` and `127.0.0.1` on ports `3000` and `3001`.
 
 ## API Routes
 
-Existing route paths are kept stable:
+All `/api/*` routes require a Firebase bearer token.
 
-- `POST /api/upload`
-- `POST /api/analyze/image`
-- `POST /api/analyze/video`
-- `POST /api/analyze/video/gemini`
-- `GET /api/analyze/video/status/{job_id}`
-- `GET /api/files/{file_type}/{job_id}/{filename}`
-- `GET /api/files/presign/{job_id}`
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/upload` | Upload image/video to R2 |
+| `POST` | `/api/analyze/image` | Run image analysis (YOLO/Gemini/LocateAnything) |
+| `POST` | `/api/analyze/video` | Start async video analysis |
+| `POST` | `/api/analyze/video/gemini` | Gemini video analysis |
+| `GET` | `/api/analyze/video/status/{job_id}` | Poll video job status |
+| `GET` | `/api/files/{type}/{job_id}/{filename}` | Serve file from R2 |
+| `GET` | `/api/files/presign/{job_id}` | Get presigned output URL |
+| `GET` | `/api/files/download/{job_id}` | Stream output download |
+| `POST` | `/api/sessions` | Create session |
+| `GET` | `/api/sessions` | List user sessions |
+| `PATCH` | `/api/sessions/{session_id}` | Update session |
+| `DELETE` | `/api/sessions/{session_id}` | Delete session |
+| `GET` | `/api/sessions/{session_id}/messages` | List session messages |
 
-Session routes:
-
-- `POST /api/sessions`
-- `GET /api/sessions`
-- `PATCH /api/sessions/{session_id}`
-- `DELETE /api/sessions/{session_id}`
-- `GET /api/sessions/{session_id}/messages`
-
-All `/api/*` routes require a Firebase bearer token from the frontend.
-
-## Firestore Rules
-
-Rules live in `firestore.rules` and allow each authenticated user to read and write only their own job and session documents:
+## Firestore Data Model
 
 ```text
-jobs/{uid}/items/{jobId}
-sessions/{uid}/items/{sessionId}
-sessions/{uid}/items/{sessionId}/messages/{messageId}
+sessions/{uid}/items/{session_id}
+  name, model, pinned, created_at, updated_at
+
+sessions/{uid}/items/{session_id}/messages/{message_id}
+  role, content, input_r2_path, output_r2_path, output_type, job_id, model
+
+jobs/{uid}/items/{job_id}
+  type, status, progress, input_key, output_key, session_id
 ```
 
-Deploy rules with your Firebase workflow before testing a new project environment.
+Per-user access is enforced in `firestore.rules`.
 
-## Validation
+## Deployment
 
-Backend compile check:
+The CI/CD pipeline (`.github/workflows/ci.yml`) handles:
 
-```powershell
-cd D:\code\vision-language
-python -B -m py_compile backend\server.py backend\session_service.py backend\firestore_service.py backend\gemini_service.py
-```
+1. Backend quality checks (compile + ruff lint)
+2. Frontend build verification
+3. Secret scanning (gitleaks)
+4. Backend deployment to Cloud Run (on push to `main`)
+5. Frontend deployment to Firebase Hosting (on push to `main`)
 
-Frontend build:
+All infrastructure identifiers are supplied via GitHub Actions secrets and repository variables. See the workflow file for the full list of required secrets/variables.
 
-```powershell
-cd D:\code\vision-language\frontend
-npm run build
-```
+## License
 
-Manual smoke flow:
-
-1. Start backend and frontend.
-2. Sign in.
-3. Upload an image.
-4. Ask a Gemini question.
-5. Confirm a session appears in the sidebar.
-6. Refresh the browser.
-7. Confirm the active session and conversation restore.
-8. Upload a video and run Gemini or YOLO analysis.
-
-## Common Local Issues
-
-- `No module named cv2`: use the Python environment that has `opencv-python` installed, or install `backend/requirements.txt`.
-- `WinError 10048`: port `8000` is already in use. Stop the existing backend process before starting another one.
-- `/api/sessions` returns `401`: expected when no Firebase bearer token is sent.
-- `/api/sessions` returns `404`: the backend process is stale or running from the wrong folder. Restart `uvicorn` from `backend/`.
-- Vertex Gemini authentication fails locally: confirm `FIREBASE_SERVICE_ACCOUNT_PATH` points to a service account with Vertex AI access.
-
-## Production Notes
-
-- Keep all secrets out of git.
-- Store only R2 object paths in Firestore.
-- Generate presigned URLs on read with short expiry.
-- Delete session-owned R2 prefixes when deleting a session.
-- Add pagination before large session/message histories.
-- Add CI tests for auth, sessions, upload, and Gemini/YOLO route contracts before scaling usage.
+[MIT](LICENSE)

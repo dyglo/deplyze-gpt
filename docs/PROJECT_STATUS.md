@@ -112,7 +112,7 @@ sessions/{uid}/items/{sessionId}
 sessions/{uid}/items/{sessionId}/messages/{messageId}
 ```
 
-The rules were deployed to `projects/vision-sys/releases/cloud.firestore` during local validation.
+The rules were deployed to `projects/<your-project>/releases/cloud.firestore` during local validation.
 
 ## Local Validation Completed
 
